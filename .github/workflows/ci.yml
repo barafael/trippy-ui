@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # trippy-ui builds on top of the trippy workspace, which is checked out next
+  # to this repository. Bump the ref when the data layer changes.
+  TRIPPY_REPO: fujiapple852/trippy
+  TRIPPY_REF: 15e61c83355208957fed980ec3fdd4a220278058
+
+jobs:
+  check:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: trippy-ui
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.TRIPPY_REPO }}
+          ref: ${{ env.TRIPPY_REF }}
+          path: trippy
+      - name: Install windowing headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: trippy-ui
+      - run: cargo fmt --check
+        working-directory: trippy-ui
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: trippy-ui
+      - run: cargo test
+        working-directory: trippy-ui

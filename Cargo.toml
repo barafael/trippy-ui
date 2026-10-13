@@ -1,0 +1,36 @@
+[package]
+name = "trippy-ui"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "A windowed port of trippy: trace network paths in a native egui window"
+repository = "https://github.com/barafael/trippy-ui"
+rust-version = "1.95"
+
+[dependencies]
+# The trippy data layer: tracing, reverse DNS and privilege handling.
+trippy-core = { path = "../trippy/crates/trippy-core" }
+trippy-dns = { path = "../trippy/crates/trippy-dns" }
+trippy-privilege = { path = "../trippy/crates/trippy-privilege" }
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+chrono-tz = "0.10"
+egui = "0.36.2"
+egui_extras = { version = "0.36.2", default-features = false }
+egui_plot = "0.37.0"
+humantime = "2"
+itertools = "0.15"
+maxminddb = "0.28"
+
+# Desktop only: the window, and system theme discovery on Linux.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+eframe = { version = "0.36.2", default-features = false, features = ["glow", "default_fonts", "persistence"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+eframe = { version = "0.36.2", default-features = false, features = ["x11", "wayland", "links"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

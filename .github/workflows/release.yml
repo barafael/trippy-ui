@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  TRIPPY_REPO: fujiapple852/trippy
+  TRIPPY_REF: 15e61c83355208957fed980ec3fdd4a220278058
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: trippy-ui
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.TRIPPY_REPO }}
+          ref: ${{ env.TRIPPY_REF }}
+          path: trippy
+      - name: Install windowing headers
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: trippy-ui
+          key: ${{ matrix.target }}
+      - name: Build
+        working-directory: trippy-ui
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Package (unix)
+        if: matrix.archive == 'tar.gz'
+        working-directory: trippy-ui
+        run: |
+          name=trippy-ui-${{ github.ref_name }}-${{ matrix.target }}
+          mkdir -p "$name"
+          cp "target/${{ matrix.target }}/release/trippy-ui" "$name/"
+          cp README.md LICENSE "$name/"
+          tar -czf "$name.tar.gz" "$name"
+      - name: Package (windows)
+        if: matrix.archive == 'zip'
+        working-directory: trippy-ui
+        shell: pwsh
+        run: |
+          $name = "trippy-ui-${{ github.ref_name }}-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $name | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/trippy-ui.exe" "$name/"
+          Copy-Item README.md, LICENSE "$name/"
+          Compress-Archive -Path "$name" -DestinationPath "$name.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trippy-ui-${{ matrix.target }}
+          path: trippy-ui/trippy-ui-*
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            Prebuilt `trippy-ui` binaries.
+
+            On Linux, grant the binary the raw-socket capability after
+            downloading it:
+
+            ```sh
+            sudo setcap cap_net_raw+p trippy-ui
+            ```
+
+            The macOS and Windows builds can use unprivileged mode with `-u`.
