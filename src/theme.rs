@@ -356,7 +356,7 @@ impl Theme {
             chart_selected: p.green,
             chart_unselected: p.dim,
             chart_axis: p.weak,
-            freq_bar: p.blue,
+            freq_bar: p.green,
             freq_text: p.text,
             flows_selected: p.green,
             flows_unselected: p.dim,

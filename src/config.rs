@@ -14,9 +14,9 @@ use trippy_dns::{IpAddrFamily, ResolveMethod};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AddressMode {
     /// Show the IP address only.
-    #[default]
     Ip,
     /// Show the reverse-lookup DNS hostname only.
+    #[default]
     Host,
     /// Show both.
     Both,

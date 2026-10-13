@@ -1,7 +1,8 @@
 //! The visualizations: chart, frequency histogram, history, flows and map.
 //!
-//! Built on `egui_plot`, which gives the same information as the terminal
-//! frontend's Braille charts with real axes and zooming.
+//! Built on `egui_plot`. The main chart is a line per hop, as in the terminal
+//! frontend; the footer is a pair of compact, axes-less bar charts that fill
+//! their space, like the terminal frontend's sparkline and bar chart.
 
 use crate::state::State;
 use crate::theme;
@@ -9,8 +10,9 @@ use egui::Ui;
 use egui_plot::{Bar, BarChart, Line, Plot, Points};
 use trippy_core::Hop;
 
-/// The number of samples the history sparkline shows.
-const HISTORY_SAMPLES: usize = 160;
+/// The width of one bar, in pixels, so the charts fill gradually instead of
+/// stretching a few bars over the whole width. Roughly a terminal cell.
+const BAR_PX: f32 = 9.0;
 
 /// The footer: the history of the selected hop and its frequency histogram.
 pub fn footer(state: &State, ui: &mut Ui) {
@@ -18,69 +20,127 @@ pub fn footer(state: &State, ui: &mut Ui) {
     let Some(hop) = state.selected_hop_or_target() else {
         return;
     };
+    let max_samples = state.trace().map_or(256, crate::trace::Trace::max_samples);
     let width = ui.available_width();
     let height = ui.available_height();
+    let gap = 8.0;
+    let usable = (width - gap - ui.spacing().item_spacing.x).max(64.0);
+    let chart_height = (height - 18.0).max(24.0);
+    let samples_slots = slots(usable * 0.74).min(max_samples);
     ui.horizontal(|ui| {
-        ui.allocate_ui(egui::vec2(width * 0.74 - 6.0, height), |ui| {
-            let samples = hop.samples();
-            let start = samples.len().saturating_sub(HISTORY_SAMPLES);
-            let points: Vec<[f64; 2]> = samples[start..]
-                .iter()
-                .enumerate()
-                .map(|(i, d)| [i as f64, d.as_secs_f64() * 1000.0])
-                .collect();
-            Plot::new("history")
-                .height(height)
-                .allow_drag(false)
-                .allow_zoom(false)
-                .allow_scroll(false)
-                .show_axes([true, true])
-                .show_grid([false, true])
-                .grid_color(p.border)
-                .x_axis_label("Samples")
-                .y_axis_label("ms")
-                .show(ui, |plot_ui| {
-                    if !points.is_empty() {
-                        plot_ui.line(
-                            Line::new(format!("Samples #{}", hop.ttl()), points)
-                                .color(p.samples)
-                                .width(1.5),
-                        );
-                    }
-                });
-        });
-        ui.allocate_ui(egui::vec2(width * 0.26 - 6.0, height), |ui| {
-            let bars = histogram(hop);
-            let single = bars.len() <= 1;
-            Plot::new("frequency")
-                .height(height)
-                .allow_drag(false)
-                .allow_zoom(false)
-                .allow_scroll(false)
-                .show_axes([true, true])
-                .show_grid([false, true])
-                .grid_color(p.border)
-                .x_axis_label("ms")
-                .y_axis_label("%")
-                .show(ui, |plot_ui| {
-                    if bars.is_empty() {
-                        return;
-                    }
-                    if single {
-                        plot_ui.set_plot_bounds_x(-1.0..=1.0);
-                    }
-                    plot_ui.add(
-                        BarChart::new(format!("Frequency #{}", hop.ttl()), bars)
-                            .color(p.freq_bar)
-                            .width(0.8),
-                    );
-                });
-        });
+        ui.allocate_ui_with_layout(
+            egui::vec2(usable * 0.74, height),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.label(
+                    egui::RichText::new(format!("Samples #{}", hop.ttl()))
+                        .small()
+                        .color(p.weak),
+                );
+                sparkline(ui, hop, samples_slots, chart_height);
+            },
+        );
+        ui.add_space(gap);
+        ui.allocate_ui_with_layout(
+            egui::vec2(usable * 0.26, height),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.label(
+                    egui::RichText::new(format!("Frequency #{}", hop.ttl()))
+                        .small()
+                        .color(p.weak),
+                );
+                frequency(ui, hop, chart_height);
+            },
+        );
     });
 }
 
-/// The percentage of samples per exact millisecond, as bars.
-fn histogram(hop: &Hop) -> Vec<Bar> {
+/// How many bars of [`BAR_PX`] fit in `width`.
+fn slots(width: f32) -> usize {
+    ((width / BAR_PX) as usize).max(8)
+}
+
+/// The history of the selected hop as a sparkline: one bar per sample on a
+/// fixed axis, so it fills from the left as samples arrive instead of
+/// stretching to fill the width. Lost samples are full-height bars in the lost
+/// colour, like the terminal frontend's absent value.
+fn sparkline(ui: &mut Ui, hop: &Hop, slots: usize, height: f32) {
+    let p = theme::of(ui);
+    let samples = hop.samples();
+    let max = samples
+        .iter()
+        .map(|d| d.as_micros() as f64)
+        .fold(0.0_f64, f64::max);
+    let start = samples.len().saturating_sub(slots);
+    let mut bars = Vec::with_capacity(slots);
+    let mut lost = Vec::new();
+    for (i, sample) in samples[start..].iter().enumerate() {
+        if sample.is_zero() {
+            lost.push(Bar::new(i as f64, max.max(1.0)).fill(p.samples_lost));
+        } else {
+            bars.push(Bar::new(i as f64, sample.as_micros() as f64).fill(p.samples));
+        }
+    }
+    Plot::new("history")
+        .height(height)
+        .allow_drag(false)
+        .allow_zoom(false)
+        .allow_scroll(false)
+        .show_axes([false, false])
+        .show_grid([false, false])
+        .auto_bounds([false, true])
+        .default_x_bounds(0.0, slots.max(1) as f64)
+        .set_margin_fraction(egui::vec2(0.0, 0.06))
+        .show(ui, |plot_ui| {
+            plot_ui.add(BarChart::new("samples", bars).width(1.0));
+            if !lost.is_empty() {
+                plot_ui.add(BarChart::new("lost", lost).width(1.0));
+            }
+        });
+}
+
+/// The percentage of samples per exact millisecond, as fixed-width bars laid
+/// out by their millisecond value, filling from the left.
+///
+/// The axis is at least [`FREQUENCY_SPAN`] milliseconds wide, so a single
+/// bucket is a bar of the terminal frontend's width rather than a stretched
+/// block.
+fn frequency(ui: &mut Ui, hop: &Hop, height: f32) {
+    let p = theme::of(ui);
+    let values = histogram(hop);
+    let Some(max_ms) = values.last().map(|(ms, _)| *ms) else {
+        return;
+    };
+    let span = (max_ms + 1).max(FREQUENCY_SPAN) as f64;
+    let bars: Vec<Bar> = values
+        .iter()
+        .map(|(ms, pct)| Bar::new(*ms as f64, *pct as f64).fill(p.freq_bar))
+        .collect();
+    Plot::new("frequency")
+        .height(height)
+        .allow_drag(false)
+        .allow_zoom(false)
+        .allow_scroll(false)
+        .show_axes([false, false])
+        .show_grid([false, false])
+        .auto_bounds([false, true])
+        .default_x_bounds(0.0, span)
+        .set_margin_fraction(egui::vec2(0.03, 0.06))
+        .show(ui, |plot_ui| {
+            plot_ui.add(
+                BarChart::new(format!("Frequency #{}", hop.ttl()), bars)
+                    .color(p.freq_bar)
+                    .width(1.0),
+            );
+        });
+}
+
+/// The smallest width of the frequency axis, in milliseconds.
+const FREQUENCY_SPAN: u64 = 6;
+
+/// The percentage of samples per exact millisecond, as `(milliseconds, percent)`.
+fn histogram(hop: &Hop) -> Vec<(u64, u64)> {
     let samples = hop.samples();
     let total = samples.len();
     if total == 0 {
@@ -92,10 +152,7 @@ fn histogram(hop: &Hop) -> Vec<Bar> {
     }
     counts
         .into_iter()
-        .map(|(ms, count)| {
-            let pct = (count * 100 / total) as f64;
-            Bar::new(ms as f64, pct)
-        })
+        .map(|(ms, count)| (ms, (count * 100 / total) as u64))
         .collect()
 }
 

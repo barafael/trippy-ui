@@ -244,6 +244,14 @@ fn address(
     address
 }
 
+/// The first reverse-lookup hostname of an address, if any.
+pub fn reverse_hostname(dns: &DnsResolver, addr: IpAddr) -> Option<String> {
+    dns.lazy_reverse_lookup(addr)
+        .hostnames()
+        .next()
+        .map(str::to_string)
+}
+
 /// The reverse DNS entry for an address, formatted according to the settings.
 fn dns_entry(addr: IpAddr, dns: &DnsResolver, settings: &Settings) -> String {
     let entry = if settings.lookup_as_info {

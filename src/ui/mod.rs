@@ -7,6 +7,7 @@ pub mod table;
 
 use crate::command::{self, Command};
 use crate::config::Named;
+use crate::format;
 use crate::state::{Prompt, State};
 use crate::theme;
 use egui::{Align, Align2, Color32, CursorIcon, Label, Layout, RichText, Sense, Ui};
@@ -102,7 +103,7 @@ pub fn render(state: &mut State, ui: &mut Ui) -> Option<Command> {
     if loaded {
         egui::Panel::bottom("footer")
             .frame(flat_panel(ui))
-            .exact_size(86.0)
+            .exact_size(108.0)
             .show(ui, |ui| charts::footer(state, ui));
     }
     if loaded && state.show_flows {
@@ -470,10 +471,11 @@ fn endpoint_source(state: &State) -> String {
     let Some(addr) = trace.source_addr() else {
         return String::from("unknown");
     };
-    match state.trace_config.port_direction.src() {
-        Some(port) => format!("{addr}:{}", port.0),
-        None => addr.to_string(),
-    }
+    let suffix = match state.trace_config.port_direction.src() {
+        Some(port) => format!(":{}", port.0),
+        None => String::new(),
+    };
+    endpoint(addr, &suffix, state)
 }
 
 /// The target endpoint with its hostname.
@@ -481,15 +483,18 @@ pub fn endpoint_target(state: &State) -> String {
     let Some(trace) = state.trace() else {
         return String::from("unknown");
     };
-    let addr = trace.target_addr;
     let suffix = match state.trace_config.port_direction.dest() {
         Some(port) => format!(":{}", port.0),
         None => String::new(),
     };
-    if trace.hostname == addr.to_string() {
-        format!("{addr}{suffix}")
-    } else {
-        format!("{addr}{suffix} ({})", trace.hostname)
+    endpoint(trace.target_addr, &suffix, state)
+}
+
+/// An endpoint as `addr[:port] (hostname)`.
+fn endpoint(addr: std::net::IpAddr, suffix: &str, state: &State) -> String {
+    match format::reverse_hostname(&state.resolver, addr) {
+        Some(name) => format!("{addr}{suffix} ({name})"),
+        None => format!("{addr}{suffix}"),
     }
 }
 
