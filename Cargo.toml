@@ -8,10 +8,12 @@ repository = "https://github.com/barafael/trippy-ui"
 rust-version = "1.95"
 
 [dependencies]
-# The trippy data layer: tracing, reverse DNS and privilege handling.
-trippy-core = { path = "../trippy/crates/trippy-core" }
-trippy-dns = { path = "../trippy/crates/trippy-dns" }
-trippy-privilege = { path = "../trippy/crates/trippy-privilege" }
+# The trippy data layer: tracing, reverse DNS and privilege handling. To build
+# against a local trippy checkout instead, add an untracked .cargo/config.toml
+# with a `[patch.crates-io]` section pointing at ../trippy/crates/<name>.
+trippy-core = "0.13.0"
+trippy-dns = "0.13.0"
+trippy-privilege = "0.13.0"
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 chrono-tz = "0.10"

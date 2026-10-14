@@ -8,9 +8,6 @@ on:
 permissions:
   contents: write
 
-env:
-  TRIPPY_REPO: fujiapple852/trippy
-  TRIPPY_REF: 15e61c83355208957fed980ec3fdd4a220278058
 
 jobs:
   build:
@@ -34,13 +31,6 @@ jobs:
             archive: zip
     steps:
       - uses: actions/checkout@v7
-        with:
-          path: trippy-ui
-      - uses: actions/checkout@v7
-        with:
-          repository: ${{ env.TRIPPY_REPO }}
-          ref: ${{ env.TRIPPY_REF }}
-          path: trippy
       - name: Install windowing headers
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -51,14 +41,11 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: trippy-ui
           key: ${{ matrix.target }}
       - name: Build
-        working-directory: trippy-ui
         run: cargo build --release --target ${{ matrix.target }}
       - name: Package (unix)
         if: matrix.archive == 'tar.gz'
-        working-directory: trippy-ui
         run: |
           name=trippy-ui-${{ github.ref_name }}-${{ matrix.target }}
           mkdir -p "$name"
@@ -67,7 +54,6 @@ jobs:
           tar -czf "$name.tar.gz" "$name"
       - name: Package (windows)
         if: matrix.archive == 'zip'
-        working-directory: trippy-ui
         shell: pwsh
         run: |
           $name = "trippy-ui-${{ github.ref_name }}-${{ matrix.target }}"
@@ -78,7 +64,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: trippy-ui-${{ matrix.target }}
-          path: trippy-ui/trippy-ui-*
+          path: trippy-ui-*
           if-no-files-found: error
 
   release:

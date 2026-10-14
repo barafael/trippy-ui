@@ -529,17 +529,13 @@ mod tests {
         assert!(parse("[nope]\nx = 1").is_err());
     }
 
+    /// trippy's own sample config, every key at its default; a copy of
+    /// `crates/trippy-tui/trippy-config-sample.toml` from the trippy release
+    /// this builds against.
     #[test]
     fn trippy_sample_config_is_all_defaults() {
-        let sample = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../trippy/crates/trippy-tui/trippy-config-sample.toml"
-        );
-        let Ok(text) = std::fs::read_to_string(sample) else {
-            eprintln!("skipped: {sample} not found");
-            return;
-        };
-        let file = parse(&text).unwrap();
+        let text = include_str!("../../tests/trippy-config-sample.toml");
+        let file = parse(text).unwrap();
         let strategy = file.strategy.unwrap();
         assert_eq!(strategy.protocol, Some(ProtocolConfig::Icmp));
         assert_eq!(strategy.max_inflight, Some(24));
@@ -549,7 +545,7 @@ mod tests {
         assert_eq!(tui.tui_address_mode, Some(AddressMode::Host));
         assert_eq!(tui.tui_custom_columns.as_deref(), Some("holsravbwdt"));
         assert_eq!(tui.tui_max_addrs, Some(0));
-        assert!(file.theme_colors.unwrap().items().len() >= 35);
+        assert_eq!(file.theme_colors.unwrap().items().len(), 34);
         assert_eq!(file.bindings.unwrap().items().len(), 38);
     }
 }

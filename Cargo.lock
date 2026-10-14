@@ -601,14 +601,14 @@ dependencies = [
 
 [[package]]
 name = "dns-lookup"
-version = "4.0.2"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "263c0ccfc6b3b6a93e959edad4f985779e76c0b36dbb2e13e3d27c690974adf1"
+checksum = "cf5597a4b7fe5275fc9dcf88ce26326bc8e4cb87d0130f33752d4c5f717793cf"
 dependencies = [
  "cfg-if",
  "libc",
- "socket2",
- "windows-sys 0.61.2",
+ "socket2 0.6.5",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -690,7 +690,7 @@ dependencies = [
  "bitflags 2.13.2",
  "emath",
  "epaint",
- "itertools",
+ "itertools 0.15.0",
  "log",
  "nohash-hasher",
  "profiling",
@@ -752,7 +752,7 @@ dependencies = [
  "ahash",
  "egui",
  "enum-map",
- "itertools",
+ "itertools 0.15.0",
  "log",
  "profiling",
 ]
@@ -1455,7 +1455,7 @@ version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d40460c0ce33d6ce4b0630ad68ff63d6661961c48b6dba35e5a4d81cfb48222"
 dependencies = [
- "socket2",
+ "socket2 0.6.5",
  "widestring",
  "windows-registry",
  "windows-result",
@@ -1473,6 +1473,15 @@ name = "ipnetwork"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
+
+[[package]]
+name = "itertools"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
+]
 
 [[package]]
 name = "itertools"
@@ -1821,9 +1830,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.31.3"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if",
@@ -2776,6 +2785,16 @@ dependencies = [
 
 [[package]]
 name = "socket2"
+version = "0.5.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678"
+dependencies = [
+ "libc",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "socket2"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
@@ -2925,7 +2944,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
- "socket2",
+ "socket2 0.6.5",
  "windows-sys 0.61.2",
 ]
 
@@ -3006,54 +3025,62 @@ dependencies = [
 
 [[package]]
 name = "trippy-core"
-version = "0.14.0-dev"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dddf03559eb5ebdf1bc7d5ffc7591dfab5793a2cbbf4f0f720bfcf60fafaa82c"
 dependencies = [
  "arrayvec",
  "bitflags 2.13.2",
  "derive_more",
  "indexmap",
- "itertools",
+ "itertools 0.14.0",
  "nix",
  "parking_lot",
  "paste",
- "socket2",
+ "socket2 0.5.10",
  "thiserror 2.0.21",
  "tracing",
  "trippy-packet",
  "trippy-privilege",
  "widestring",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
 name = "trippy-dns"
-version = "0.14.0-dev"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "199065919ab40574006383853f7fd3a0bc80a09954d4a43283a287f62651871a"
 dependencies = [
  "crossbeam",
  "dns-lookup",
  "hickory-resolver",
- "itertools",
+ "itertools 0.14.0",
  "parking_lot",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "trippy-packet"
-version = "0.14.0-dev"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a750fbdfe9e97d1ee3f158dedfda6ed3e599f69e8e803f1cd5140db5775b849a"
 dependencies = [
- "itertools",
+ "itertools 0.14.0",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "trippy-privilege"
-version = "0.14.0-dev"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0b0eeb331aa6b13afdf0c0adc8b4b624f00dfe6a62a10f6095b98f5d8cfea1e"
 dependencies = [
  "caps",
  "nix",
  "paste",
  "thiserror 2.0.21",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3070,7 +3097,7 @@ dependencies = [
  "egui_plot",
  "etcetera",
  "humantime",
- "itertools",
+ "itertools 0.15.0",
  "maxminddb",
  "serde",
  "toml",

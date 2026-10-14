@@ -10,12 +10,18 @@ config file and keyboard-driven navigation.
 
 ## Build
 
-`trippy-ui` builds against a checkout of the trippy workspace, expected next to
-this repository:
-
 ```sh
-git clone https://github.com/fujiapple852/trippy ../trippy
 cargo run --release -- example.com
+```
+
+The trippy crates come from crates.io. To build against a local trippy
+checkout, add an untracked `.cargo/config.toml`:
+
+```toml
+[patch.crates-io]
+trippy-core = { path = "../trippy/crates/trippy-core" }
+trippy-dns = { path = "../trippy/crates/trippy-dns" }
+trippy-privilege = { path = "../trippy/crates/trippy-privilege" }
 ```
 
 On Linux the window needs the usual X11/Wayland development headers
