@@ -2,12 +2,11 @@
 
 use crate::bindings::{Bindings, Item};
 use crate::command::{Command, InputCommand, ScrollType};
-use crate::config::{AddressMode, Named, Options, TraceConfig};
+use crate::config::{Options, TraceConfig};
 use crate::format;
 use crate::geoip;
 use crate::list::Selection;
 use crate::settings::Settings;
-use crate::theme;
 use crate::trace::{self, Trace};
 use std::time::{Duration, SystemTime};
 use trippy_core::{FlowId, Hop};
@@ -15,9 +14,6 @@ use trippy_dns::{Config as DnsConfig, DnsResolver, ResolveMethod};
 
 /// The maximum chart zoom.
 pub const MAX_ZOOM: usize = 16;
-
-/// The rows of the Theme tab before the colour slots: palette and mode.
-pub const THEME_FIXED_ITEMS: usize = 2;
 
 /// Which prompt is open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,19 +63,6 @@ impl SettingsTab {
             SettingsTab::Bindings => "Bindings",
             SettingsTab::Theme => "Theme",
             SettingsTab::Columns => "Columns",
-        }
-    }
-
-    /// How many items the tab lists.
-    pub fn count(self) -> usize {
-        match self {
-            SettingsTab::Tui => 9,
-            SettingsTab::Trace => 18,
-            SettingsTab::Dns => 5,
-            SettingsTab::GeoIp => 1,
-            SettingsTab::Bindings => Item::ALL.len(),
-            SettingsTab::Theme => THEME_FIXED_ITEMS + theme::Slot::ALL.len(),
-            SettingsTab::Columns => crate::columns::ALL.len(),
         }
     }
 }
@@ -144,6 +127,8 @@ pub struct State {
     pub pressed: Option<(Command, f64)>,
     /// How often the window repaints.
     pub refresh_rate: Duration,
+    /// Whether the window is drawn in dark mode, for the theme rows.
+    pub dark_mode: bool,
 }
 
 impl State {
@@ -212,6 +197,7 @@ impl State {
             frozen_start: None,
             pressed: None,
             refresh_rate: options.refresh_rate,
+            dark_mode: true,
         }
     }
 
@@ -380,7 +366,7 @@ impl State {
                 self.settings_item = 0;
             }
             Command::Bottom => {
-                self.settings_item = self.settings_tab.count().saturating_sub(1);
+                self.settings_item = self.settings_count(self.settings_tab).saturating_sub(1);
             }
             Command::Activate => self.activate_setting(),
             Command::ToggleChart if self.settings_tab == SettingsTab::Columns => {
@@ -540,7 +526,7 @@ impl State {
     }
 
     fn move_settings_item(&mut self, direction: i64, amount: usize) {
-        let count = self.settings_tab.count();
+        let count = self.settings_count(self.settings_tab);
         if count == 0 {
             return;
         }
@@ -551,53 +537,9 @@ impl State {
 
     /// Applies the selected settings item (Enter, or a click).
     pub fn activate_setting(&mut self) {
-        match self.settings_tab {
-            SettingsTab::Tui => match self.settings_item {
-                0 => {
-                    self.settings.address_mode = next(AddressMode::ALL, self.settings.address_mode)
-                }
-                1 => {
-                    self.settings.as_mode = next(crate::config::AsMode::ALL, self.settings.as_mode)
-                }
-                2 => {
-                    self.settings.icmp_extension_mode = next(
-                        crate::config::IcmpExtensionMode::ALL,
-                        self.settings.icmp_extension_mode,
-                    );
-                }
-                3 => {
-                    self.settings.geoip_mode =
-                        next(crate::config::GeoIpMode::ALL, self.settings.geoip_mode);
-                }
-                4 => {
-                    let max = self.max_hosts();
-                    self.settings.max_addrs = cycle_max_addrs(self.settings.max_addrs, max);
-                }
-                5 => {
-                    let hops = u8::try_from(self.hops().len()).unwrap_or(u8::MAX);
-                    self.settings.privacy_max_ttl =
-                        cycle_privacy(self.settings.privacy_max_ttl, hops);
-                }
-                6 => self.open_settings_tab(SettingsTab::Columns as usize),
-                _ => {}
-            },
-            SettingsTab::Dns if self.settings_item == 4 => {
-                if self.trace_config.dns_resolve_method != ResolveMethod::System {
-                    self.settings.lookup_as_info = !self.settings.lookup_as_info;
-                    self.resolver.flush();
-                }
-            }
-            SettingsTab::Theme => match self.settings_item {
-                0 => self.settings.theme.family = self.settings.theme.family.next(),
-                1 => self.settings.theme.cycle_mode(),
-                i => {
-                    if let Some(slot) = theme::Slot::ALL.get(i - THEME_FIXED_ITEMS) {
-                        self.settings.theme.overrides.remove(slot);
-                    }
-                }
-            },
-            SettingsTab::Columns => self.settings.columns.toggle(self.settings_item),
-            _ => {}
+        let items = self.settings_items(self.settings_tab);
+        if let Some(item) = items.get(self.settings_item) {
+            item.activate(self);
         }
     }
 
@@ -819,28 +761,6 @@ impl Hint {
     }
 }
 
-/// The next value in a cyclic list.
-fn next<T: Copy + PartialEq>(all: &[T], current: T) -> T {
-    let index = all.iter().position(|v| *v == current).unwrap_or(0);
-    all[(index + 1) % all.len()]
-}
-
-fn cycle_max_addrs(current: Option<u8>, max: Option<u8>) -> Option<u8> {
-    match (current, max) {
-        (None, Some(_)) => Some(1),
-        (Some(n), Some(max)) if n < max => Some(n + 1),
-        _ => None,
-    }
-}
-
-fn cycle_privacy(current: Option<u8>, hops: u8) -> Option<u8> {
-    match current {
-        None => Some(0),
-        Some(ttl) if ttl < hops => Some(ttl + 1),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -856,19 +776,52 @@ mod tests {
     }
 
     #[test]
-    fn cycling_helpers_wrap() {
-        assert_eq!(next(AddressMode::ALL, AddressMode::Ip), AddressMode::Host);
-        assert_eq!(next(AddressMode::ALL, AddressMode::Both), AddressMode::Ip);
-        assert_eq!(cycle_max_addrs(None, Some(3)), Some(1));
-        assert_eq!(cycle_max_addrs(Some(3), Some(3)), None);
-        assert_eq!(cycle_privacy(None, 5), Some(0));
-        assert_eq!(cycle_privacy(Some(5), 5), None);
+    fn settings_rows_activate() {
+        use crate::testing::{reply, state_from_rounds};
+        let options = Options {
+            targets: vec![String::from("x")],
+            trace: TraceConfig::default(),
+            settings: Settings::default(),
+            refresh_rate: Duration::from_millis(100),
+            locale: None,
+            theme_colors: Vec::new(),
+            bindings: Bindings::default(),
+        };
+        let snapshot = state_from_rounds(&[&[reply(1, "10.0.0.1", 1.0)]]);
+        let mut state = State::for_test(options, vec![snapshot]);
+        state.open_settings_tab(SettingsTab::Tui as usize);
+        assert_eq!(state.settings_count(SettingsTab::Tui), 9);
+        state.activate_setting();
+        assert_eq!(
+            state.settings.address_mode,
+            crate::config::AddressMode::Both
+        );
+        state.settings_item = 4;
+        state.activate_setting();
+        assert_eq!(state.settings.max_addrs, Some(1));
+        state.settings_item = 6;
+        state.activate_setting();
+        assert_eq!(state.settings_tab, SettingsTab::Columns);
+        state.activate_setting();
+        assert_eq!(state.settings.columns.shown().count(), 10);
+        state.open_settings_tab(SettingsTab::Theme as usize);
+        state.activate_setting();
+        assert_eq!(state.settings.theme.family, crate::theme::Family::Gruvbox);
+        assert_eq!(
+            state.settings_count(SettingsTab::Theme),
+            2 + crate::theme::Slot::ALL.len()
+        );
+        assert_eq!(
+            state.settings_count(SettingsTab::Bindings),
+            crate::bindings::Item::ALL.len()
+        );
     }
 }
 
 #[cfg(test)]
 mod command_tests {
     use super::*;
+    use crate::config::AddressMode;
     use crate::testing::{lost, reply, state_from_rounds};
 
     fn options() -> Options {

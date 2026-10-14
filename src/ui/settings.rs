@@ -1,8 +1,9 @@
 //! The settings dialog: the same tabs as the terminal frontend, made editable.
 
+use crate::bindings::Item;
 use crate::command::Command;
-use crate::config::{AddressMode, AsMode, GeoIpMode, IcmpExtensionMode, Named};
-use crate::state::{SettingsTab, State, THEME_FIXED_ITEMS};
+use crate::settings_items::Control;
+use crate::state::{SettingsTab, State};
 use crate::theme;
 use crate::ui::{GAP, section_bar, tab_strip};
 use egui::{Color32, RichText, Sense, Ui};
@@ -24,13 +25,9 @@ pub fn render(state: &mut State, ui: &mut Ui) -> Option<Command> {
             ui.set_min_width(screen.width() * 0.42);
             let close = format!(
                 "{}, {} or {} to close",
-                state
-                    .bindings
-                    .display(crate::bindings::Item::ToggleSettings),
-                state
-                    .bindings
-                    .display(crate::bindings::Item::ClearSelection),
-                state.bindings.display(crate::bindings::Item::Quit),
+                state.bindings.display(Item::ToggleSettings),
+                state.bindings.display(Item::ClearSelection),
+                state.bindings.display(Item::Quit),
             );
             section_bar(ui, "Settings", &close, true);
             let titles: Vec<&str> = SettingsTab::ALL.iter().map(|tab| tab.title()).collect();
@@ -68,21 +65,70 @@ fn info(state: &State) -> String {
             "Enter cycles the palette and mode; Enter on a colour resets it to the palette default."
                 .into()
         }
-        SettingsTab::Columns => {
-            "Enter toggles a column; , and . move the selected column up and down.".into()
-        }
+        SettingsTab::Columns => format!(
+            "Enter or {} toggles a column; {} and {} move the selected column up and down.",
+            state.bindings.display(Item::ToggleChart),
+            state.bindings.display(Item::PreviousHopAddress),
+            state.bindings.display(Item::NextHopAddress),
+        ),
     }
 }
 
+/// A change a control asked for, applied once the state is free again.
+type Change = Box<dyn FnOnce(&mut State)>;
+
+/// The rows of the selected tab, each with its control.
 fn render_items(state: &mut State, ui: &mut Ui) {
-    match state.settings_tab {
-        SettingsTab::Tui => render_tui(state, ui),
-        SettingsTab::Trace => render_trace(state, ui),
-        SettingsTab::Dns => render_dns(state, ui),
-        SettingsTab::GeoIp => render_geoip(state, ui),
-        SettingsTab::Bindings => render_bindings(state, ui),
-        SettingsTab::Theme => render_theme(state, ui),
-        SettingsTab::Columns => render_columns(state, ui),
+    let items = state.settings_items(state.settings_tab);
+    // A control's change is applied after the loop, once `state` is free.
+    let mut change: Option<Change> = None;
+    let mut select = None;
+    for (i, item) in items.into_iter().enumerate() {
+        let selected = state.settings_item == i;
+        let label = item.label.clone();
+        let clicked = row(ui, selected, &label, |ui| match item.control {
+            Control::Text { .. } => value_text(ui, &item.value),
+            Control::Choice {
+                options,
+                selected,
+                set,
+            } => {
+                let mut picked = None;
+                egui::ComboBox::from_id_salt(&label)
+                    .selected_text(options[selected])
+                    .show_ui(ui, |ui| {
+                        for (j, name) in options.iter().enumerate() {
+                            if ui.selectable_label(j == selected, *name).clicked() {
+                                picked = Some(j);
+                            }
+                        }
+                    });
+                if let Some(j) = picked {
+                    change = Some(Box::new(move |state| set(state, j)));
+                }
+            }
+            Control::Toggle { on, toggle } => {
+                let mut value = on;
+                if ui.checkbox(&mut value, "").changed() {
+                    change = Some(Box::new(move |state| toggle(state)));
+                }
+            }
+            Control::Color { color, set, .. } => {
+                let mut value = color;
+                if ui.color_edit_button_srgba(&mut value).changed() {
+                    change = Some(Box::new(move |state| set(state, value)));
+                }
+            }
+        });
+        if clicked {
+            select = Some(i);
+        }
+    }
+    if let Some(i) = select {
+        state.settings_item = i;
+    }
+    if let Some(change) = change {
+        change(state);
     }
 }
 
@@ -117,319 +163,6 @@ fn row(ui: &mut Ui, selected: bool, label: &str, value: impl FnOnce(&mut Ui)) ->
     response.clicked()
 }
 
-fn value_text(ui: &mut Ui, text: String) {
+fn value_text(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).monospace());
-}
-
-fn render_tui(state: &mut State, ui: &mut Ui) {
-    let selected = state.settings.address_mode;
-    if row(ui, state.settings_item == 0, "tui-address-mode", |ui| {
-        combo(
-            ui,
-            "address_mode",
-            AddressMode::ALL,
-            selected,
-            |v| v.name(),
-            |v| {
-                state.settings.address_mode = v;
-            },
-        );
-    }) {
-        state.settings_item = 0;
-    }
-    let selected = state.settings.as_mode;
-    if row(ui, state.settings_item == 1, "tui-as-mode", |ui| {
-        combo(
-            ui,
-            "as_mode",
-            AsMode::ALL,
-            selected,
-            |v| v.name(),
-            |v| {
-                state.settings.as_mode = v;
-            },
-        );
-    }) {
-        state.settings_item = 1;
-    }
-    let selected = state.settings.icmp_extension_mode;
-    if row(
-        ui,
-        state.settings_item == 2,
-        "tui-icmp-extension-mode",
-        |ui| {
-            combo(
-                ui,
-                "icmp_mode",
-                IcmpExtensionMode::ALL,
-                selected,
-                |v| v.name(),
-                |v| {
-                    state.settings.icmp_extension_mode = v;
-                },
-            );
-        },
-    ) {
-        state.settings_item = 2;
-    }
-    let selected = state.settings.geoip_mode;
-    if row(ui, state.settings_item == 3, "tui-geoip-mode", |ui| {
-        combo(
-            ui,
-            "geoip_mode",
-            GeoIpMode::ALL,
-            selected,
-            |v| v.name(),
-            |v| {
-                state.settings.geoip_mode = v;
-            },
-        );
-    }) {
-        state.settings_item = 3;
-    }
-    let value = state
-        .settings
-        .max_addrs
-        .map_or_else(|| String::from("auto"), |n| n.to_string());
-    if row(ui, state.settings_item == 4, "tui-max-addrs", |ui| {
-        value_text(ui, value)
-    }) {
-        state.settings_item = 4;
-    }
-    let value = state
-        .settings
-        .privacy_max_ttl
-        .map_or_else(|| String::from("off"), |n| n.to_string());
-    if row(ui, state.settings_item == 5, "tui-privacy-max-ttl", |ui| {
-        value_text(ui, value)
-    }) {
-        state.settings_item = 5;
-    }
-    let value = state.settings.columns.to_codes();
-    if row(ui, state.settings_item == 6, "tui-custom-columns", |ui| {
-        value_text(ui, value)
-    }) {
-        state.settings_item = 6;
-    }
-    let value = humantime::format_duration(state.refresh_rate).to_string();
-    if row(ui, state.settings_item == 7, "tui-refresh-rate", |ui| {
-        value_text(ui, value)
-    }) {
-        state.settings_item = 7;
-    }
-    let value = state
-        .settings
-        .timezone
-        .map_or_else(|| String::from("auto"), |tz| tz.to_string());
-    if row(ui, state.settings_item == 8, "tui-timezone", |ui| {
-        value_text(ui, value)
-    }) {
-        state.settings_item = 8;
-    }
-}
-
-fn render_trace(state: &mut State, ui: &mut Ui) {
-    let c = &state.trace_config;
-    let items: Vec<(&str, String)> = vec![
-        ("first-ttl", c.first_ttl.to_string()),
-        ("max-ttl", c.max_ttl.to_string()),
-        (
-            "min-round-duration",
-            humantime::format_duration(c.min_round_duration).to_string(),
-        ),
-        (
-            "max-round-duration",
-            humantime::format_duration(c.max_round_duration).to_string(),
-        ),
-        (
-            "grace-duration",
-            humantime::format_duration(c.grace_duration).to_string(),
-        ),
-        ("max-inflight", c.max_inflight.to_string()),
-        ("initial-sequence", c.initial_sequence.to_string()),
-        (
-            "read-timeout",
-            humantime::format_duration(c.read_timeout).to_string(),
-        ),
-        ("packet-size", c.packet_size.to_string()),
-        ("payload-pattern", c.payload_pattern.to_string()),
-        ("tos", c.tos.to_string()),
-        ("icmp-extensions", c.icmp_extensions.to_string()),
-        (
-            "interface",
-            c.interface.clone().unwrap_or_else(|| String::from("auto")),
-        ),
-        ("multipath-strategy", c.multipath_strategy.to_string()),
-        (
-            "target-port",
-            c.port_direction
-                .dest()
-                .map_or_else(|| String::from("-"), |p| p.0.to_string()),
-        ),
-        (
-            "source-port",
-            c.port_direction
-                .src()
-                .map_or_else(|| String::from("-"), |p| p.0.to_string()),
-        ),
-        ("max-samples", c.max_samples.to_string()),
-        ("max-flows", c.max_flows().to_string()),
-    ];
-    for (i, (label, value)) in items.into_iter().enumerate() {
-        if row(ui, state.settings_item == i, label, |ui| {
-            value_text(ui, value)
-        }) {
-            state.settings_item = i;
-        }
-    }
-}
-
-fn render_dns(state: &mut State, ui: &mut Ui) {
-    let c = &state.trace_config;
-    let items: Vec<(&str, String)> = vec![
-        (
-            "dns-timeout",
-            humantime::format_duration(c.dns_timeout).to_string(),
-        ),
-        ("dns-ttl", humantime::format_duration(c.dns_ttl).to_string()),
-        (
-            "dns-resolve-method",
-            format!("{:?}", c.dns_resolve_method).to_lowercase(),
-        ),
-        ("dns-resolve-all", c.dns_resolve_all.to_string()),
-    ];
-    for (i, (label, value)) in items.into_iter().enumerate() {
-        if row(ui, state.settings_item == i, label, |ui| {
-            value_text(ui, value)
-        }) {
-            state.settings_item = i;
-        }
-    }
-    let mut enabled = state.settings.lookup_as_info;
-    if row(ui, state.settings_item == 4, "dns-lookup-as-info", |ui| {
-        ui.checkbox(&mut enabled, "");
-    }) {
-        state.settings_item = 4;
-    }
-    if enabled != state.settings.lookup_as_info {
-        state.settings.lookup_as_info = enabled;
-    }
-}
-
-fn render_geoip(state: &mut State, ui: &mut Ui) {
-    let value = state
-        .trace_config
-        .geoip_mmdb_file
-        .clone()
-        .unwrap_or_else(|| String::from("none"));
-    if row(ui, state.settings_item == 0, "geoip-mmdb-file", |ui| {
-        value_text(ui, value)
-    }) {
-        state.settings_item = 0;
-    }
-}
-
-fn render_bindings(state: &mut State, ui: &mut Ui) {
-    for (i, item) in crate::bindings::Item::ALL.into_iter().enumerate() {
-        let keys = state.bindings.display(item);
-        if row(ui, state.settings_item == i, item.name(), |ui| {
-            value_text(ui, keys)
-        }) {
-            state.settings_item = i;
-        }
-    }
-}
-
-fn render_theme(state: &mut State, ui: &mut Ui) {
-    let dark = ui.visuals().dark_mode;
-    let family = state.settings.theme.family;
-    if row(ui, state.settings_item == 0, "palette", |ui| {
-        egui::ComboBox::from_id_salt("theme_family")
-            .selected_text(family.name())
-            .show_ui(ui, |ui| {
-                for candidate in theme::Family::ALL {
-                    if ui
-                        .selectable_label(candidate == family, candidate.name())
-                        .clicked()
-                    {
-                        state.settings.theme.family = candidate;
-                    }
-                }
-            });
-    }) {
-        state.settings_item = 0;
-    }
-    let mode = state.settings.theme.mode;
-    if row(ui, state.settings_item == 1, "mode", |ui| {
-        egui::ComboBox::from_id_salt("theme_mode")
-            .selected_text(state.settings.theme.mode_name())
-            .show_ui(ui, |ui| {
-                for (candidate, name) in [
-                    (egui::ThemePreference::System, "system"),
-                    (egui::ThemePreference::Light, "light"),
-                    (egui::ThemePreference::Dark, "dark"),
-                ] {
-                    if ui.selectable_label(candidate == mode, name).clicked() {
-                        state.settings.theme.mode = candidate;
-                    }
-                }
-            });
-    }) {
-        state.settings_item = 1;
-    }
-    for (i, slot) in theme::Slot::ALL.iter().enumerate() {
-        let item = i + THEME_FIXED_ITEMS;
-        let mut color = state.settings.theme.slot(*slot, dark);
-        if row(ui, state.settings_item == item, slot.name(), |ui| {
-            if ui.color_edit_button_srgba(&mut color).changed() {
-                state.settings.theme.set_slot(*slot, color);
-            }
-        }) {
-            state.settings_item = item;
-        }
-    }
-}
-
-fn render_columns(state: &mut State, ui: &mut Ui) {
-    let entries: Vec<(crate::columns::Column, bool)> = state
-        .settings
-        .columns
-        .all()
-        .iter()
-        .map(|e| (e.column, e.shown))
-        .collect();
-    for (i, (column, shown)) in entries.into_iter().enumerate() {
-        let mut value = shown;
-        if row(ui, state.settings_item == i, column.name(), |ui| {
-            ui.checkbox(&mut value, "");
-        }) {
-            state.settings_item = i;
-        }
-        if value != shown {
-            state.settings.columns.toggle(i);
-        }
-    }
-}
-
-/// A combo box over a [`Named`] enum.
-fn combo<T: Named + PartialEq>(
-    ui: &mut Ui,
-    id: &str,
-    all: &[T],
-    current: T,
-    name: impl Fn(T) -> &'static str,
-    mut set: impl FnMut(T),
-) {
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(name(current))
-        .show_ui(ui, |ui| {
-            for value in all {
-                if ui
-                    .selectable_label(*value == current, name(*value))
-                    .clicked()
-                {
-                    set(*value);
-                }
-            }
-        });
 }

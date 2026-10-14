@@ -12,6 +12,7 @@ mod format;
 mod geoip;
 mod list;
 mod settings;
+mod settings_items;
 mod state;
 #[cfg(test)]
 mod testing;

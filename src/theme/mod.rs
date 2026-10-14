@@ -236,12 +236,6 @@ impl Family {
         }
     }
 
-    /// The family after this one, wrapping around.
-    pub fn next(self) -> Self {
-        let i = Self::ALL.iter().position(|f| *f == self).unwrap_or(0);
-        Self::ALL[(i + 1) % Self::ALL.len()]
-    }
-
     /// The dark or light variant.
     pub const fn palette(self, dark: bool) -> &'static Palette {
         match (self, dark) {
@@ -384,6 +378,13 @@ impl Theme {
     }
 }
 
+/// The light/dark modes with their names in the settings.
+pub const MODES: [(ThemePreference, &str); 3] = [
+    (ThemePreference::System, "system"),
+    (ThemePreference::Light, "light"),
+    (ThemePreference::Dark, "dark"),
+];
+
 /// The theme setting: a palette family, a light/dark mode and per-slot overrides.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Settings {
@@ -428,15 +429,6 @@ impl Settings {
             }
         }
         Ok(())
-    }
-
-    /// The mode after this one: system, light, dark.
-    pub fn cycle_mode(&mut self) {
-        self.mode = match self.mode {
-            ThemePreference::System => ThemePreference::Light,
-            ThemePreference::Light => ThemePreference::Dark,
-            ThemePreference::Dark => ThemePreference::System,
-        };
     }
 
     /// The mode's name in the settings.
@@ -635,7 +627,6 @@ mod tests {
                 .apply_items(&[(String::from("bg-color"), String::from("octarine"))])
                 .is_err()
         );
-        assert_eq!(Family::Catppuccin.next(), Family::Default);
     }
 
     #[test]

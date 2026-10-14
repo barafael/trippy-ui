@@ -57,6 +57,7 @@ impl eframe::App for TrippyApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.state.dark_mode = ui.visuals().dark_mode;
         self.state.poll();
         self.sync_theme();
         // An open modal takes Escape to close itself; it must not also clear the
