@@ -66,10 +66,11 @@ xdotool windowactivate --sync "$id" 2>/dev/null || true
 
 shot() { sleep 0.6; screenshot "$OUT/$1.png"; echo "captured $1"; }
 key() { xdotool key --clearmodifiers "$1" 2>/dev/null || true; }
-# Symbol keys go through `type`: with several keyboard layouts loaded, `key`
-# may pick the symbol's keycode from another layout group (`slash` lands on
-# the `7` key with a us,de keymap).
 type_keys() { xdotool type --clearmodifiers "$1" 2>/dev/null || true; }
+# With several keyboard layouts loaded, xdotool may pick `/` from another
+# layout group (it lands on the `7` key with a us,de keymap); the numpad
+# divide key produces `/` in every layout.
+filter() { key KP_Divide; type_keys "$1"; }
 
 shot 01-hops
 key c; shot 02-chart
@@ -85,9 +86,9 @@ key 5; shot 10-settings-bindings
 key Escape
 key h; shot 11-help
 key Escape
-type_keys "/1"; shot 12-filter
+filter "1"; shot 12-filter
 key Escape
-type_keys "/nomatch"; shot 13-filter-empty
+filter "nomatch"; shot 13-filter-empty
 key Escape
 
 pkill -x trippy-ui || true
