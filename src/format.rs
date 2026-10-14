@@ -86,6 +86,19 @@ pub enum Status {
     TargetLost,
 }
 
+impl Status {
+    /// What the status dot stands for.
+    pub const fn description(self) -> &'static str {
+        match self {
+            Status::Ok => "Every probe answered",
+            Status::Partial => "Some probes unanswered",
+            Status::AllLost => "No probe answered",
+            Status::TargetPartial => "Target: some probes unanswered",
+            Status::TargetLost => "Target: no probe answered",
+        }
+    }
+}
+
 /// Classifies a hop's status, distinguishing the target.
 pub fn status_of(hop: &Hop, is_target: bool) -> Status {
     let lost = hop.total_sent() - hop.total_recv();

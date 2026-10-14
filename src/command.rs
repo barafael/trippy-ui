@@ -78,6 +78,10 @@ pub enum Command {
     Activate,
     /// A prompt command.
     Input(InputCommand),
+    /// Scale the whole window: in, out, or back to normal.
+    UiZoom(i8),
+    /// Ask for another target to trace.
+    AddTarget,
     /// Quit.
     Exit,
 }

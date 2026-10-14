@@ -75,6 +75,16 @@ interface (`--tui-locale` only affects GeoIP names) and `--tui-preserve-screen`.
 The status bar always shows the keys for the current view, and they are
 clickable. `h` opens the help overlay with every key, `s` the settings.
 
+On top of trippy's keys, the window adds what a mouse makes natural: click a
+column header to sort the hops (again for descending, a third time for the
+path order), drag the header borders to resize columns, hover a clipped host
+or a status dot for the full text, click a flow bar to select it, and type a
+filter with `/` to highlight its matches. `Ctrl+N` (or `+ target` in the
+header) traces another target without restarting, for ICMP traces. `Ctrl+=`,
+`Ctrl+-`, `Ctrl+0` and `Ctrl+wheel` scale the window. The theme, the window
+scale and the window's size and position are remembered between runs; on
+Linux the `system` theme follows the desktop's light/dark preference.
+
 ## License
 
 Apache-2.0, like trippy.

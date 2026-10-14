@@ -335,7 +335,7 @@ pub fn flows(state: &mut State, ui: &mut Ui) {
     let (left, right) = (start > 0, end < flows.len());
     ui.label(egui::RichText::new("Flows").small().color(p.weak));
     let height = ui.available_height();
-    let response = Plot::new("flows")
+    let plot = Plot::new("flows")
         .height(height)
         .show_axes([false, false])
         .show_grid([false, false])
@@ -353,8 +353,19 @@ pub fn flows(state: &mut State, ui: &mut Ui) {
             for label in labels {
                 plot_ui.text(label);
             }
-        })
-        .response;
+        });
+    if plot.response.clicked()
+        && let Some(pos) = plot.response.interact_pointer_pos()
+    {
+        let x = plot.transform.value_from_position(pos).x;
+        let index = start + (x + 0.5).floor().max(0.0) as usize;
+        if let Some(id) = flows.get(index) {
+            state.selected_flow = *id;
+            state.selection.clear();
+            state.selected_hop_address = 0;
+        }
+    }
+    let response = plot.response;
     let rect = response.rect;
     let font = egui::TextStyle::Body.resolve(ui.style());
     if left {
@@ -391,6 +402,8 @@ pub fn map(state: &State, ui: &mut Ui) {
         .allow_scroll(false)
         .show_axes([false, false])
         .show_grid([false, false])
+        .show_x(false)
+        .show_y(false)
         .default_x_bounds(-180.0, 180.0)
         .default_y_bounds(-90.0, 90.0)
         .show(ui, |plot_ui| {

@@ -83,7 +83,9 @@ pub fn render(state: &mut State, ui: &mut Ui) -> Option<Command> {
         .frame(flat_panel(ui))
         .show_separator_line(false)
         .show(ui, |ui| {
-            render_header(state, ui);
+            if let Some(c) = render_header(state, ui) {
+                command = Some(c);
+            }
         });
 
     egui::Panel::bottom("info")
@@ -262,6 +264,17 @@ fn render_status(state: &State, ui: &mut Ui) -> Option<Command> {
                     });
                     ui.add_space(GAP * 2.0);
                 }
+                if state.prompt == Some(Prompt::Target) {
+                    ui.label(RichText::new("target:").color(p.label));
+                    ui.label(
+                        RichText::new(format!(" {}▏ ", state.target_input))
+                            .monospace()
+                            .color(p.on_accent)
+                            .background_color(p.accent),
+                    );
+                    ui.label(RichText::new("Enter to trace, Esc to cancel").color(p.weak));
+                    ui.add_space(GAP * 2.0);
+                }
                 for hint in state.hints() {
                     let pulse = state
                         .pressed
@@ -286,8 +299,9 @@ fn render_status(state: &State, ui: &mut Ui) -> Option<Command> {
     clicked
 }
 
-fn render_header(state: &mut State, ui: &mut Ui) {
+fn render_header(state: &mut State, ui: &mut Ui) -> Option<Command> {
     let p = theme::of(ui);
+    let mut command = None;
     egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(GAP as i8, 6))
         .show(ui, |ui| {
@@ -321,6 +335,22 @@ fn render_header(state: &mut State, ui: &mut Ui) {
                     |trace| status_line(state, trace),
                 );
                 ui.label(RichText::new(status).color(status_color(state, ui)));
+                if state.fatal.is_none() && state.trace_config.protocol == Protocol::Icmp {
+                    ui.add_space(GAP);
+                    let add = ui
+                        .add(
+                            Label::new(RichText::new("+ target").color(p.weak))
+                                .sense(Sense::CLICK)
+                                .selectable(false),
+                        )
+                        .on_hover_text("Trace another target (Ctrl+N)");
+                    if add.hovered() {
+                        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+                    }
+                    if add.clicked() {
+                        command = Some(Command::AddTarget);
+                    }
+                }
             });
         });
     if state.traces.len() > 1 {
@@ -330,6 +360,45 @@ fn render_header(state: &mut State, ui: &mut Ui) {
             state.select_trace(i);
         }
     }
+    command
+}
+
+/// Monospace text with the filter's matches highlighted.
+pub fn highlighted(ui: &Ui, text: &str, query: &str, color: Color32) -> egui::text::LayoutJob {
+    use egui::text::{LayoutJob, TextFormat};
+    let p = theme::of(ui);
+    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+    let plain = TextFormat {
+        font_id: font_id.clone(),
+        color,
+        ..Default::default()
+    };
+    let hit = TextFormat {
+        font_id,
+        color: p.bg,
+        background: p.yellow,
+        ..Default::default()
+    };
+    let mut job = LayoutJob::default();
+    let lower = text.to_lowercase();
+    let query = query.to_lowercase();
+    // Byte offsets of `lower` match `text` only when lowercasing kept the length.
+    if query.is_empty() || lower.len() != text.len() {
+        job.append(text, 0.0, plain);
+        return job;
+    }
+    let mut from = 0;
+    while let Some(i) = lower[from..].find(&query) {
+        let (start, end) = (from + i, from + i + query.len());
+        if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+            break;
+        }
+        job.append(&text[from..start], 0.0, plain.clone());
+        job.append(&text[start..end], 0.0, hit.clone());
+        from = end;
+    }
+    job.append(&text[from..], 0.0, plain);
+    job
 }
 
 /// Cycles the address mode, as clicking the info bar does.
@@ -415,13 +484,15 @@ fn render_info_bar(state: &mut State, ui: &mut Ui) -> Option<Command> {
                     .color(p.info_bar_text),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let toggle = |ui: &mut Ui, text: String, on: bool| -> bool {
+                    let toggle = |ui: &mut Ui, text: String, on: bool, tip: &str| -> bool {
                         let color = if on { p.accent } else { p.info_bar_text };
-                        let response = ui.add(
-                            Label::new(RichText::new(text).monospace().color(color))
-                                .sense(Sense::CLICK)
-                                .selectable(false),
-                        );
+                        let response = ui
+                            .add(
+                                Label::new(RichText::new(text).monospace().color(color))
+                                    .sense(Sense::CLICK)
+                                    .selectable(false),
+                            )
+                            .on_hover_text(tip);
                         if response.hovered() {
                             ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
                         }
@@ -438,6 +509,7 @@ fn render_info_bar(state: &mut State, ui: &mut Ui) -> Option<Command> {
                                 .map_or_else(|| "-".into(), |n| n.to_string())
                         ),
                         state.settings.max_addrs.is_some(),
+                        "Addresses shown per hop; click for one more",
                     ) {
                         clicked = Some(Command::ExpandHosts);
                     }
@@ -451,10 +523,16 @@ fn render_info_bar(state: &mut State, ui: &mut Ui) -> Option<Command> {
                                 .map_or_else(|| " -".into(), |n| format!("{n:2}"))
                         ),
                         state.settings.privacy_max_ttl.is_some(),
+                        "Hops hidden for privacy; click to hide one more",
                     ) {
                         clicked = Some(Command::ExpandPrivacy);
                     }
-                    if toggle(ui, state.settings.address_mode.name().to_string(), true) {
+                    if toggle(
+                        ui,
+                        state.settings.address_mode.name().to_string(),
+                        true,
+                        "How hosts are shown; click to cycle ip, host, both",
+                    ) {
                         state.settings.address_mode =
                             next_address_mode(state.settings.address_mode);
                     }
@@ -469,6 +547,7 @@ fn render_info_bar(state: &mut State, ui: &mut Ui) -> Option<Command> {
                             }
                         ),
                         state.settings.show_hop_details,
+                        "Expand the selected hop",
                     ) {
                         clicked = Some(Command::ToggleHopDetails);
                     }
@@ -477,6 +556,7 @@ fn render_info_bar(state: &mut State, ui: &mut Ui) -> Option<Command> {
                         ui,
                         format!("[{}] ASN", if as_on { "x" } else { " " }),
                         as_on,
+                        "Look up autonomous systems (needs a non-system resolver)",
                     ) {
                         clicked = Some(Command::ToggleAsInfo);
                     }
@@ -645,7 +725,10 @@ fn render_help(state: &mut State, ui: &mut Ui) -> Option<Command> {
                     ui.label(RichText::new("for the key map.").color(p.weak));
                 });
                 ui.add_space(GAP);
-                ui.label(RichText::new("https://github.com/fujiapple852/trippy").color(p.weak));
+                ui.hyperlink_to(
+                    RichText::new("https://github.com/fujiapple852/trippy").color(p.weak),
+                    "https://github.com/fujiapple852/trippy",
+                );
                 ui.label(RichText::new("Distributed under the Apache License 2.0").color(p.weak));
             });
         });

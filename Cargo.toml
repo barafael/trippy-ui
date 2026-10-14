@@ -34,6 +34,8 @@ eframe = { version = "0.36.2", default-features = false, features = ["glow", "de
 
 [target.'cfg(target_os = "linux")'.dependencies]
 eframe = { version = "0.36.2", default-features = false, features = ["x11", "wayland", "links"] }
+# The desktop's light/dark preference, which winit does not report on Linux.
+zbus = "5.19"
 
 [profile.release]
 opt-level = 3

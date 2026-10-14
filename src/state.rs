@@ -1,6 +1,7 @@
 //! Application state and command handling.
 
 use crate::bindings::{Bindings, Item};
+use crate::columns::Column;
 use crate::command::{Command, InputCommand, ScrollType};
 use crate::config::{Options, TraceConfig};
 use crate::format;
@@ -8,8 +9,9 @@ use crate::geoip;
 use crate::list::Selection;
 use crate::settings::Settings;
 use crate::trace::{self, Trace};
+use std::sync::mpsc;
 use std::time::{Duration, SystemTime};
-use trippy_core::{FlowId, Hop};
+use trippy_core::{FlowId, Hop, Protocol};
 use trippy_dns::{Config as DnsConfig, DnsResolver, ResolveMethod};
 
 /// The maximum chart zoom.
@@ -20,6 +22,37 @@ pub const MAX_ZOOM: usize = 16;
 pub enum Prompt {
     /// The hop filter.
     Search,
+    /// A new target to trace.
+    Target,
+}
+
+/// How the hops table is ordered when not by TTL.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sort {
+    pub column: Column,
+    pub descending: bool,
+}
+
+impl Sort {
+    /// The next state of a clicked header: ascending, descending, then off.
+    pub fn cycle(sort: Option<Sort>, column: Column) -> Option<Sort> {
+        match sort {
+            Some(Sort {
+                column: current,
+                descending: false,
+            }) if current == column => Some(Sort {
+                column,
+                descending: true,
+            }),
+            Some(Sort {
+                column: current, ..
+            }) if current == column => None,
+            _ => Some(Sort {
+                column,
+                descending: false,
+            }),
+        }
+    }
 }
 
 /// The tabs of the settings dialog.
@@ -95,6 +128,15 @@ pub struct State {
     pub prompt: Option<Prompt>,
     /// The hop filter.
     pub search: String,
+    /// The target being typed into the target prompt.
+    pub target_input: String,
+    /// Traces being started for targets added while the window is open.
+    target_tx: mpsc::Sender<Result<Trace, String>>,
+    target_rx: mpsc::Receiver<Result<Trace, String>>,
+    /// The trace identifier for the next tracer.
+    next_trace_id: u16,
+    /// The column the hops table is sorted by, if not by TTL.
+    pub sort: Option<Sort>,
     /// The selected hop, as an index into [`State::rows`].
     pub selection: Selection,
     /// Indices into the current flow's hops that pass the filter.
@@ -140,14 +182,9 @@ impl State {
                 state.fatal = Some(String::from("no valid IP addresses for the given targets"));
             }
             Ok(targets) => {
-                let pid = std::process::id() as u16;
-                for (i, (hostname, addr)) in targets.into_iter().enumerate() {
-                    match Trace::start(
-                        &state.trace_config,
-                        hostname,
-                        addr,
-                        pid.wrapping_add(i as u16),
-                    ) {
+                for (hostname, addr) in targets {
+                    let id = state.take_trace_id();
+                    match Trace::start(&state.trace_config, hostname, addr, id) {
                         Ok(trace) => state.traces.push(trace),
                         Err(e) => state.fatal = Some(e.to_string()),
                     }
@@ -161,6 +198,7 @@ impl State {
 
     /// The state before any trace is started: the resolver and the settings.
     fn empty(options: Options, geoip: geoip::Lookup) -> Self {
+        let (target_tx, target_rx) = mpsc::channel();
         Self {
             running: true,
             resolver: DnsResolver::start(DnsConfig::new(
@@ -181,6 +219,11 @@ impl State {
             notice: None,
             prompt: None,
             search: String::new(),
+            target_input: String::new(),
+            target_tx,
+            target_rx,
+            next_trace_id: std::process::id() as u16,
+            sort: None,
             selection: Selection::default(),
             rows: Vec::new(),
             selected_flow: FlowId(0),
@@ -267,8 +310,25 @@ impl State {
         self.frozen_start.is_some()
     }
 
+    /// The identifier for the next tracer; each tracer needs its own.
+    fn take_trace_id(&mut self) -> u16 {
+        let id = self.next_trace_id;
+        self.next_trace_id = self.next_trace_id.wrapping_add(1);
+        id
+    }
+
     /// Refreshes the snapshots and the filtered rows. Called once per frame.
     pub fn poll(&mut self) {
+        while let Ok(started) = self.target_rx.try_recv() {
+            match started {
+                Ok(trace) => {
+                    self.traces.push(trace);
+                    self.fatal = None;
+                    self.select_trace(self.traces.len() - 1);
+                }
+                Err(e) => self.notice = Some(e),
+            }
+        }
         if !self.frozen() {
             for trace in &mut self.traces {
                 trace.poll();
@@ -281,11 +341,11 @@ impl State {
         self.selected_hop_address = self.selected_hop_address.min(max);
     }
 
-    /// Recomputes the filtered rows and keeps the selection in range.
+    /// Recomputes the filtered, sorted rows and keeps the selection in range.
     fn refresh_rows(&mut self) {
         let query = self.search.to_lowercase();
         let hops = self.hops();
-        let rows: Vec<usize> = if query.is_empty() {
+        let mut rows: Vec<usize> = if query.is_empty() {
             (0..hops.len()).collect()
         } else {
             hops.iter()
@@ -294,6 +354,22 @@ impl State {
                 .map(|(i, _)| i)
                 .collect()
         };
+        if let Some(sort) = self.sort {
+            let keys: Vec<SortKey> = hops
+                .iter()
+                .map(|hop| self.sort_key(sort.column, hop))
+                .collect();
+            rows.sort_by(|a, b| {
+                let order = keys[*a]
+                    .partial_cmp(&keys[*b])
+                    .unwrap_or(std::cmp::Ordering::Equal);
+                if sort.descending {
+                    order.reverse()
+                } else {
+                    order
+                }
+            });
+        }
         self.rows = rows;
         self.selection.len = self.rows.len();
         match self.selection.selected {
@@ -303,6 +379,50 @@ impl State {
             }
             _ => {}
         }
+    }
+
+    /// What a column sorts by: numbers by value, the host by its text.
+    fn sort_key(&self, column: Column, hop: &Hop) -> SortKey {
+        let recv = hop.total_recv();
+        let ms = |v: Option<f64>| if recv > 0 { v } else { None };
+        match column {
+            Column::Ttl => SortKey::Number(f64::from(hop.ttl())),
+            Column::Host => SortKey::Text(
+                format::host(hop, &self.resolver, &self.geoip, &self.settings).to_lowercase(),
+            ),
+            Column::LossPct => SortKey::Number(hop.loss_pct()),
+            Column::Sent => SortKey::Number(hop.total_sent() as f64),
+            Column::Received => SortKey::Number(hop.total_recv() as f64),
+            Column::Failed => SortKey::Number(hop.total_failed() as f64),
+            Column::Last => SortKey::Optional(ms(hop.last_ms())),
+            Column::Average => SortKey::Optional((recv > 0).then(|| hop.avg_ms())),
+            Column::Best => SortKey::Optional(ms(hop.best_ms())),
+            Column::Worst => SortKey::Optional(ms(hop.worst_ms())),
+            Column::StdDev => SortKey::Optional((recv > 1).then(|| hop.stddev_ms())),
+            Column::Jitter => SortKey::Optional(ms(hop.jitter_ms())),
+            Column::Javg => SortKey::Optional((recv > 0).then(|| hop.javg_ms())),
+            Column::Jmax => SortKey::Optional(ms(hop.jmax_ms())),
+            Column::Jinta => SortKey::Optional((recv > 0).then(|| hop.jinta())),
+            Column::LastSrcPort => SortKey::Number(f64::from(hop.last_src_port())),
+            Column::LastDestPort => SortKey::Number(f64::from(hop.last_dest_port())),
+            Column::LastSeq => SortKey::Number(f64::from(hop.last_sequence())),
+            Column::Floss => SortKey::Number(hop.total_forward_loss() as f64),
+            Column::Bloss => SortKey::Number(hop.total_backward_loss() as f64),
+            Column::FlossPct => SortKey::Number(hop.forward_loss_pct()),
+            other => SortKey::Text(format::cell(
+                other,
+                hop,
+                &self.resolver,
+                &self.geoip,
+                &self.settings,
+            )),
+        }
+    }
+
+    /// Sorts the hops by a column: ascending, then descending, then by TTL.
+    pub fn sort_by(&mut self, column: Column) {
+        self.sort = Sort::cycle(self.sort, column);
+        self.refresh_rows();
     }
 
     /// Whether a hop matches the filter.
@@ -477,6 +597,8 @@ impl State {
                 self.selection.clear();
             }
             Command::ClearDnsCache => self.resolver.flush(),
+            Command::AddTarget => self.open_target_prompt(),
+            Command::UiZoom(_) => {}
             Command::ToggleAsInfo => {
                 if self.trace_config.dns_resolve_method != ResolveMethod::System {
                     self.settings.lookup_as_info = !self.settings.lookup_as_info;
@@ -489,8 +611,74 @@ impl State {
         }
     }
 
+    /// Opens the prompt for another target, for ICMP traces.
+    fn open_target_prompt(&mut self) {
+        if self.trace_config.protocol == Protocol::Icmp && !self.trace_config.dns_resolve_all {
+            self.target_input.clear();
+            self.prompt = Some(Prompt::Target);
+        } else {
+            self.notice = Some(String::from(
+                "Only ICMP tracing without --dns-resolve-all can trace several targets",
+            ));
+        }
+    }
+
+    /// Resolves a new target and starts its trace on a background thread, so
+    /// a slow lookup does not freeze the window.
+    pub fn add_target(&mut self, target: String) {
+        let target = target.trim().to_string();
+        if target.is_empty() {
+            return;
+        }
+        let cfg = self.trace_config.clone();
+        let id = self.take_trace_id();
+        let tx = self.target_tx.clone();
+        let started = std::thread::Builder::new()
+            .name(String::from("add-target"))
+            .spawn(move || {
+                // The window's resolver cannot cross threads; a lookup-only
+                // resolver of its own is cheap.
+                let resolver = DnsResolver::start(DnsConfig::new(
+                    cfg.dns_resolve_method,
+                    cfg.addr_family,
+                    cfg.dns_timeout,
+                    cfg.dns_ttl,
+                ))
+                .map_err(|e| e.to_string());
+                let result = resolver
+                    .and_then(|resolver| {
+                        trace::resolve_targets(&[target], &cfg, &resolver)
+                            .map_err(|e| e.to_string())
+                    })
+                    .and_then(|mut targets| {
+                        let (hostname, addr) = targets
+                            .pop()
+                            .ok_or_else(|| String::from("no valid IP address for the target"))?;
+                        Trace::start(&cfg, hostname, addr, id).map_err(|e| e.to_string())
+                    });
+                let _ = tx.send(result);
+            });
+        if started.is_err() {
+            self.notice = Some(String::from("could not start the trace"));
+        }
+    }
+
     fn input_command(&mut self, input: InputCommand) {
         match (self.prompt, input) {
+            (Some(Prompt::Target), InputCommand::Handle(text)) => self.target_input.push_str(&text),
+            (Some(Prompt::Target), InputCommand::Backspace) => {
+                self.target_input.pop();
+            }
+            (Some(Prompt::Target), InputCommand::Confirm) => {
+                self.prompt = None;
+                let target = std::mem::take(&mut self.target_input);
+                self.add_target(target);
+            }
+            (Some(Prompt::Target), InputCommand::Exit) => {
+                self.prompt = None;
+                self.target_input.clear();
+            }
+            (Some(Prompt::Target), InputCommand::Enter) => {}
             (None, InputCommand::Enter) => self.prompt = Some(Prompt::Search),
             (None, InputCommand::Backspace) => {
                 if !self.search.is_empty() {
@@ -742,6 +930,15 @@ impl State {
     }
 }
 
+/// What a column sorts by.
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+enum SortKey {
+    /// A missing value sorts first.
+    Optional(Option<f64>),
+    Number(f64),
+    Text(String),
+}
+
 /// A key hint of the status bar: the keys, what they do, and the commands
 /// they stand for (clickable when there is exactly one).
 #[derive(Clone, Debug)]
@@ -899,6 +1096,57 @@ mod command_tests {
         assert_eq!(state.selection_text().as_deref(), Some("**Hidden**"));
         run(&mut state, Command::ToggleHopDetails);
         assert_eq!(state.settings.max_addrs, None);
+    }
+
+    #[test]
+    fn header_clicks_sort_the_rows() {
+        let mut state = path();
+        assert_eq!(state.rows, [0, 1, 2]);
+        state.sort_by(Column::Average);
+        assert_eq!(
+            state.sort,
+            Some(Sort {
+                column: Column::Average,
+                descending: false
+            })
+        );
+        assert_eq!(state.rows, [0, 1, 2]);
+        state.sort_by(Column::Average);
+        assert_eq!(state.rows, [2, 1, 0]);
+        state.sort_by(Column::Average);
+        assert_eq!(state.sort, None);
+        assert_eq!(state.rows, [0, 1, 2]);
+        state.sort_by(Column::LossPct);
+        state.sort_by(Column::LossPct);
+        assert_eq!(state.rows[0], 1, "the lossy hop sorts first descending");
+        state.sort_by(Column::Host);
+        assert_eq!(state.rows, [0, 1, 2]);
+    }
+
+    #[test]
+    fn target_prompt_collects_text() {
+        let mut state = path();
+        run(&mut state, Command::AddTarget);
+        assert_eq!(state.prompt, Some(Prompt::Target));
+        run(
+            &mut state,
+            Command::Input(InputCommand::Handle("exa".into())),
+        );
+        run(
+            &mut state,
+            Command::Input(InputCommand::Handle("mple".into())),
+        );
+        assert_eq!(state.target_input, "example");
+        run(&mut state, Command::Input(InputCommand::Backspace));
+        assert_eq!(state.target_input, "exampl");
+        run(&mut state, Command::Input(InputCommand::Exit));
+        assert_eq!(state.prompt, None);
+        assert!(state.target_input.is_empty());
+        let mut udp = path();
+        udp.trace_config.protocol = Protocol::Udp;
+        run(&mut udp, Command::AddTarget);
+        assert_eq!(udp.prompt, None);
+        assert!(udp.notice.is_some());
     }
 
     #[test]

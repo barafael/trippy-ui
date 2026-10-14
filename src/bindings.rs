@@ -580,6 +580,11 @@ const EXTRA: &[(KeyBinding, Command)] = &[
         KeyBinding::plain(Key::Backspace),
         Command::Input(InputCommand::Backspace),
     ),
+    (KeyBinding::ctrl(Key::Equals), Command::UiZoom(1)),
+    (KeyBinding::ctrl(Key::Plus), Command::UiZoom(1)),
+    (KeyBinding::ctrl(Key::Minus), Command::UiZoom(-1)),
+    (KeyBinding::ctrl(Key::Num0), Command::UiZoom(0)),
+    (KeyBinding::ctrl(Key::N), Command::AddTarget),
 ];
 
 /// The window's own keys as `(keys, description)` for the help overlay.
@@ -598,6 +603,11 @@ pub const EXTRA_HELP: &[(&str, &str)] = &[
         "Filter the hops; Enter keeps the filter, Esc clears it",
     ),
     ("+", "Zoom the chart in"),
+    ("Ctrl+N", "Trace another target (ICMP)"),
+    (
+        "Ctrl+= / Ctrl+-, Ctrl+wheel",
+        "Scale the window; Ctrl+0 resets",
+    ),
     ("Ctrl+C", "Quit"),
 ];
 
@@ -783,6 +793,18 @@ mod tests {
             Some(Command::Input(InputCommand::Enter))
         );
         assert_eq!(bindings.lookup(Key::X, Modifiers::NONE), None);
+        assert_eq!(
+            bindings.lookup(Key::N, Modifiers::CTRL),
+            Some(Command::AddTarget)
+        );
+        assert_eq!(
+            bindings.lookup(Key::Equals, Modifiers::CTRL),
+            Some(Command::UiZoom(1))
+        );
+        assert_eq!(
+            bindings.lookup(Key::Equals, Modifiers::NONE),
+            Some(Command::ZoomIn)
+        );
     }
 
     #[test]

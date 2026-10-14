@@ -59,7 +59,7 @@ impl Trace {
         addr: IpAddr,
         trace_id: u16,
     ) -> anyhow::Result<Self> {
-        let (tracer, handle) = Builder::new(addr)
+        let tracer = Builder::new(addr)
             .interface(cfg.interface.clone())
             .source_addr(cfg.source_addr)
             .privilege_mode(cfg.privilege_mode)
@@ -87,8 +87,10 @@ impl Trace {
             .max_flows(cfg.max_flows())
             .max_samples(cfg.max_samples)
             .drop_privileges(true)
-            .build()?
-            .spawn()?;
+            .build()?;
+        // trippy-core 0.13 has no way to stop a spawned tracer, so a trace
+        // runs until the window closes.
+        let (tracer, handle) = tracer.spawn()?;
         let snapshot = tracer.snapshot();
         Ok(Self {
             tracer,

@@ -46,9 +46,12 @@ pub fn render(state: &mut State, ui: &mut Ui) -> Option<crate::command::Command>
     }
 
     let row_height = ui.spacing().interact_size.y;
+    let sort = state.sort;
+    let search = state.search.clone();
     let mut builder = TableBuilder::new(ui)
         .id_salt("hops")
         .striped(true)
+        .resizable(true)
         .sense(Sense::CLICK)
         .cell_layout(Layout::left_to_right(Align::Center))
         .max_scroll_height(f32::INFINITY);
@@ -65,11 +68,33 @@ pub fn render(state: &mut State, ui: &mut Ui) -> Option<crate::command::Command>
 
     let mut clicked = None;
     let mut double = false;
+    let mut sort_clicked = None;
     builder
         .header(row_height, |mut header| {
             for column in &columns {
                 header.col(|ui| {
-                    ui.label(RichText::new(column.name()).strong().color(p.label));
+                    let arrow = match sort {
+                        Some(s) if s.column == *column && s.descending => " ⏷",
+                        Some(s) if s.column == *column => " ⏶",
+                        _ => "",
+                    };
+                    let response = ui
+                        .add(
+                            egui::Label::new(
+                                RichText::new(format!("{}{arrow}", column.name()))
+                                    .strong()
+                                    .color(p.label),
+                            )
+                            .sense(Sense::CLICK)
+                            .selectable(false),
+                        )
+                        .on_hover_text("Click to sort");
+                    if response.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    if response.clicked() {
+                        sort_clicked = Some(*column);
+                    }
                 });
             }
         })
@@ -94,10 +119,12 @@ pub fn render(state: &mut State, ui: &mut Ui) -> Option<crate::command::Command>
                                 ui.visuals_mut().weak_text_color = Some(p.on_accent);
                             }
                             if *column == Column::Status {
-                                let color = status_color(ui, format::status_of(hop, is_target));
-                                let (rect, _) =
+                                let status = format::status_of(hop, is_target);
+                                let color = status_color(ui, status);
+                                let (rect, response) =
                                     ui.allocate_exact_size(egui::vec2(12.0, 12.0), Sense::hover());
                                 ui.painter().circle_filled(rect.center(), 5.0, color);
+                                response.on_hover_text(status.description());
                                 return;
                             }
                             let color = row_color(state, hop, is_selected, ui);
@@ -122,7 +149,23 @@ pub fn render(state: &mut State, ui: &mut Ui) -> Option<crate::command::Command>
                                     &state.geoip,
                                     &state.settings,
                                 );
-                                ui.label(RichText::new(text).monospace().color(color));
+                                // Truncated cells show their full text on hover;
+                                // the host cell highlights the filter's matches.
+                                if *column == Column::Host {
+                                    ui.add(
+                                        egui::Label::new(crate::ui::highlighted(
+                                            ui, &text, &search, color,
+                                        ))
+                                        .truncate(),
+                                    );
+                                } else {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(text).monospace().color(color),
+                                        )
+                                        .truncate(),
+                                    );
+                                }
                             }
                         });
                     }
@@ -140,6 +183,9 @@ pub fn render(state: &mut State, ui: &mut Ui) -> Option<crate::command::Command>
     if let Some(i) = clicked {
         state.selection.select(i);
         state.selected_hop_address = 0;
+    }
+    if let Some(column) = sort_clicked {
+        state.sort_by(column);
     }
     double.then_some(crate::command::Command::ToggleHopDetails)
 }

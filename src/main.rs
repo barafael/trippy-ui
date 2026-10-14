@@ -10,7 +10,10 @@ mod command;
 mod config;
 mod format;
 mod geoip;
+mod geometry;
 mod list;
+#[cfg(target_os = "linux")]
+mod portal;
 mod settings;
 mod settings_items;
 mod state;
@@ -55,19 +58,26 @@ fn run() -> anyhow::Result<()> {
         }
         None => geoip::Lookup::empty(),
     };
+    let saved = geometry::Geometry::load();
     let viewport = egui::ViewportBuilder::default()
         .with_title("trippy-ui")
         .with_app_id("trippy-ui")
         .with_inner_size([1280.0, 860.0])
         .with_min_inner_size([720.0, 480.0]);
     let native_options = eframe::NativeOptions {
-        viewport,
+        viewport: match saved {
+            Some(geometry) => geometry.apply(viewport),
+            None => viewport,
+        },
+        // The window is restored by `geometry`, see there for why.
+        persist_window: false,
         ..Default::default()
     };
+    let tracker = geometry::Tracker::new(saved.and_then(|g| g.position));
     eframe::run_native(
         "trippy-ui",
         native_options,
-        Box::new(move |cc| Ok(Box::new(app::TrippyApp::new(cc, options, geoip)))),
+        Box::new(move |cc| Ok(Box::new(app::TrippyApp::new(cc, options, geoip, tracker)))),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))
 }
