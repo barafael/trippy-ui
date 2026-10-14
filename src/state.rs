@@ -301,7 +301,6 @@ impl State {
             Some(selected) if selected >= self.rows.len() => {
                 self.selection.selected = self.rows.len().checked_sub(1);
             }
-            None if !self.rows.is_empty() => self.selection.selected = Some(0),
             _ => {}
         }
     }
@@ -791,15 +790,16 @@ mod tests {
         let mut state = State::for_test(options, vec![snapshot]);
         state.open_settings_tab(SettingsTab::Tui as usize);
         assert_eq!(state.settings_count(SettingsTab::Tui), 9);
+        state.settings_item = 2;
         state.activate_setting();
         assert_eq!(
             state.settings.address_mode,
             crate::config::AddressMode::Both
         );
-        state.settings_item = 4;
+        state.settings_item = 6;
         state.activate_setting();
         assert_eq!(state.settings.max_addrs, Some(1));
-        state.settings_item = 6;
+        state.settings_item = 7;
         state.activate_setting();
         assert_eq!(state.settings_tab, SettingsTab::Columns);
         state.activate_setting();
@@ -882,6 +882,10 @@ mod command_tests {
     #[test]
     fn details_and_copy_respect_privacy() {
         let mut state = path();
+        // Nothing is selected until the user moves, as in trippy.
+        assert_eq!(state.selection.selected, None);
+        assert_eq!(state.selected_hop_or_target().map(Hop::ttl), Some(3));
+        run(&mut state, Command::Next(ScrollType::List, 1));
         assert_eq!(state.selection.selected, Some(0));
         assert_eq!(
             state.selection_text().as_deref(),
@@ -915,6 +919,7 @@ mod command_tests {
         );
         state.poll();
         assert_eq!(state.rows, [2]);
+        run(&mut state, Command::Next(ScrollType::List, 1));
         assert_eq!(state.selected_hop().map(Hop::ttl), Some(3));
         run(&mut state, Command::Input(InputCommand::Exit));
         state.poll();

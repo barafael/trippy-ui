@@ -127,6 +127,30 @@ fn frequency(ui: &mut Ui, hop: &Hop, height: f32) {
         .iter()
         .map(|(ms, pct)| Bar::new(*ms as f64 + 0.5, *pct as f64).fill(p.freq_bar))
         .collect();
+    // As in the terminal frontend: the percentage inside the bar, the
+    // millisecond bucket under it.
+    let labels: Vec<Text> = values
+        .iter()
+        .flat_map(|(ms, pct)| {
+            let x = *ms as f64 + 0.5;
+            [
+                Text::new(
+                    format!("pct-{ms}"),
+                    egui_plot::PlotPoint::new(x, *pct as f64),
+                    egui::RichText::new(pct.to_string())
+                        .small()
+                        .color(p.freq_text),
+                )
+                .anchor(egui::Align2::CENTER_TOP),
+                Text::new(
+                    format!("ms-{ms}"),
+                    egui_plot::PlotPoint::new(x, 0.0),
+                    egui::RichText::new(ms.to_string()).small().color(p.weak),
+                )
+                .anchor(egui::Align2::CENTER_TOP),
+            ]
+        })
+        .collect();
     Plot::new("frequency")
         .height(height)
         .allow_drag(false)
@@ -136,13 +160,18 @@ fn frequency(ui: &mut Ui, hop: &Hop, height: f32) {
         .show_grid([false, false])
         .auto_bounds([false, true])
         .default_x_bounds(0.0, span)
-        .set_margin_fraction(egui::vec2(0.03, 0.06))
+        .include_y(-18.0)
+        .include_y(100.0)
+        .set_margin_fraction(egui::vec2(0.03, 0.02))
         .show(ui, |plot_ui| {
             plot_ui.add(
                 BarChart::new(format!("Frequency #{}", hop.ttl()), bars)
                     .color(p.freq_bar)
                     .width(1.0),
             );
+            for label in labels {
+                plot_ui.text(label);
+            }
         });
 }
 
@@ -260,6 +289,12 @@ pub fn flows(state: &mut State, ui: &mut Ui) {
     let round_flow = trace.snapshot.round_flow_id();
     let mut bars = Vec::new();
     let mut labels = Vec::new();
+    let max_count = flows[start..end]
+        .iter()
+        .map(|id| trace.snapshot.round_count(*id))
+        .max()
+        .unwrap_or(1)
+        .max(1) as f64;
     for (x, id) in flows[start..end].iter().enumerate() {
         let count = trace.snapshot.round_count(*id);
         let color = if *id == state.selected_flow {
@@ -273,19 +308,32 @@ pub fn flows(state: &mut State, ui: &mut Ui) {
             p.flows_noncurrent
         };
         bars.push(Bar::new(x as f64, count as f64).fill(color));
+        // As in the terminal frontend: the round count inside the bar, the
+        // flow id under it.
+        labels.push(
+            Text::new(
+                format!("count-{id}"),
+                egui_plot::PlotPoint::new(x as f64, count as f64),
+                egui::RichText::new(count.to_string())
+                    .small()
+                    .color(p.on_accent),
+            )
+            .anchor(egui::Align2::CENTER_TOP),
+        );
         labels.push(
             Text::new(
                 format!("flow-{id}"),
-                egui_plot::PlotPoint::new(x as f64, count as f64 / 2.0),
-                egui::RichText::new(format!("{id}\n{count}"))
+                egui_plot::PlotPoint::new(x as f64, 0.0),
+                egui::RichText::new(id.to_string())
                     .monospace()
-                    .strong(),
+                    .color(label_color),
             )
-            .color(label_color),
+            .anchor(egui::Align2::CENTER_TOP),
         );
     }
     state.flows_start_index = start;
     let (left, right) = (start > 0, end < flows.len());
+    ui.label(egui::RichText::new("Flows").small().color(p.weak));
     let height = ui.available_height();
     let response = Plot::new("flows")
         .height(height)
@@ -296,7 +344,8 @@ pub fn flows(state: &mut State, ui: &mut Ui) {
         .allow_scroll(false)
         .auto_bounds([false, true])
         .default_x_bounds(-0.5, visible.max(1) as f64 - 0.5)
-        .set_margin_fraction(egui::vec2(0.0, 0.1))
+        .include_y(-max_count * 0.3)
+        .set_margin_fraction(egui::vec2(0.0, 0.05))
         .show(ui, |plot_ui| {
             if !bars.is_empty() {
                 plot_ui.add(BarChart::new("Flows", bars).width(0.8));

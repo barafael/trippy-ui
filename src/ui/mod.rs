@@ -104,17 +104,17 @@ pub fn render(state: &mut State, ui: &mut Ui) -> Option<Command> {
     render_toast(ui, status.response.rect.height());
 
     let loaded = state.fatal.is_none() && !state.traces.is_empty();
+    if loaded && state.show_flows {
+        egui::Panel::top("flows")
+            .frame(flat_panel(ui))
+            .exact_size(110.0)
+            .show(ui, |ui| charts::flows(state, ui));
+    }
     if loaded {
         egui::Panel::bottom("footer")
             .frame(flat_panel(ui))
             .exact_size(108.0)
             .show(ui, |ui| charts::footer(state, ui));
-    }
-    if loaded && state.show_flows {
-        egui::Panel::bottom("flows")
-            .frame(flat_panel(ui))
-            .exact_size(104.0)
-            .show(ui, |ui| charts::flows(state, ui));
     }
 
     egui::CentralPanel::default()
@@ -164,11 +164,23 @@ fn render_splash(ui: &mut Ui) {
     let p = theme::of(ui);
     section_bar(ui, "Hops", "", true);
     ui.add_space(ui.available_height() * 0.3);
+    logo(ui, p.text);
     ui.vertical_centered(|ui| {
-        ui.monospace(RichText::new(LOGO).color(p.text));
         ui.add_space(GAP);
         ui.label(RichText::new("Awaiting data...").italics().color(p.weak));
     });
+}
+
+/// The ASCII logo, centred as a block. A centred label would centre every
+/// line on its own and scramble the art.
+fn logo(ui: &mut Ui, color: Color32) {
+    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    let galley = ui.fonts_mut(|f| f.layout_no_wrap(LOGO.to_string(), font, color));
+    let size = galley.size();
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), size.y), Sense::hover());
+    let pos = egui::pos2(rect.center().x - size.x / 2.0, rect.top());
+    ui.painter().galley(pos, galley, color);
 }
 
 /// The body when the tracer has failed, in place of the terminal frontend's
@@ -570,12 +582,12 @@ fn endpoint(addr: IpAddr, suffix: &str, name: Option<&str>) -> String {
 
 /// The clock in the configured timezone.
 fn clock(state: &State) -> String {
+    use chrono::SecondsFormat;
     match state.settings.timezone() {
         Some(tz) => chrono::Utc::now()
             .with_timezone(&tz)
-            .format("%Y-%m-%d %H:%M:%S %Z")
-            .to_string(),
-        None => chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            .to_rfc3339_opts(SecondsFormat::Secs, true),
+        None => chrono::Local::now().to_rfc3339_opts(SecondsFormat::Secs, true),
     }
 }
 
@@ -603,8 +615,8 @@ fn render_help(state: &mut State, ui: &mut Ui) -> Option<Command> {
             ui.set_min_width(screen.width() * 0.5);
             section_bar(ui, "Help", &close, true);
             egui::Frame::NONE.inner_margin(GAP).show(ui, |ui| {
+                logo(ui, p.text);
                 ui.vertical_centered(|ui| {
-                    ui.monospace(LOGO);
                     ui.add_space(GAP);
                     ui.label(
                         RichText::new("A network diagnostic tool")
@@ -729,12 +741,15 @@ fn render_help_keys(state: &State, ui: &mut Ui) {
     }
 }
 
-const LOGO: &str = "\
- _____    _                
-|_   _| _(_)_ __ _ __ _  _ 
-  | || '_| | '_ \\ '_ \\ || |
-  |_||_| |_| .__/ .__/\\_, |
-           |_|  |_|   |__/ ";
+// Joined explicitly: a `\` line continuation would strip the first line's
+// leading space and shift the art.
+const LOGO: &str = concat!(
+    " _____    _                \n",
+    "|_   _| _(_)_ __ _ __ _  _ \n",
+    "  | || '_| | '_ \\ '_ \\ || |\n",
+    "  |_||_| |_| .__/ .__/\\_, |\n",
+    "           |_|  |_|   |__/ ",
+);
 
 /// The "Copied" confirmation, floating above the status bar.
 fn render_toast(ui: &Ui, status_height: f32) {

@@ -155,6 +155,20 @@ impl State {
     fn tui_items(&self) -> Vec<SettingsItem> {
         let s = &self.settings;
         vec![
+            SettingsItem::text(
+                "tui-refresh-rate",
+                humantime::format_duration(self.refresh_rate).to_string(),
+            ),
+            SettingsItem::action(
+                "tui-privacy-max-ttl",
+                s.privacy_max_ttl
+                    .map_or_else(|| String::from("off"), |n| n.to_string()),
+                |state| {
+                    let hops = u8::try_from(state.hops().len()).unwrap_or(u8::MAX);
+                    state.settings.privacy_max_ttl =
+                        cycle_privacy(state.settings.privacy_max_ttl, hops);
+                },
+            ),
             SettingsItem::choice("tui-address-mode", s.address_mode, |state, i| {
                 state.settings.address_mode = AddressMode::ALL[i];
             }),
@@ -180,23 +194,9 @@ impl State {
                     state.settings.max_addrs = cycle_max_addrs(state.settings.max_addrs, max);
                 },
             ),
-            SettingsItem::action(
-                "tui-privacy-max-ttl",
-                s.privacy_max_ttl
-                    .map_or_else(|| String::from("off"), |n| n.to_string()),
-                |state| {
-                    let hops = u8::try_from(state.hops().len()).unwrap_or(u8::MAX);
-                    state.settings.privacy_max_ttl =
-                        cycle_privacy(state.settings.privacy_max_ttl, hops);
-                },
-            ),
             SettingsItem::action("tui-custom-columns", s.columns.to_codes(), |state| {
                 state.open_settings_tab(SettingsTab::Columns as usize);
             }),
-            SettingsItem::text(
-                "tui-refresh-rate",
-                humantime::format_duration(self.refresh_rate).to_string(),
-            ),
             SettingsItem::text(
                 "tui-timezone",
                 s.timezone

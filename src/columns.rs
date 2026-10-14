@@ -158,13 +158,13 @@ impl Column {
             Self::LastSeq => "Seq",
             Self::LastIcmpPacketType => "Type",
             Self::LastIcmpPacketCode => "Code",
-            Self::LastNatStatus => "NAT",
+            Self::LastNatStatus => "Nat",
             Self::Failed => "Fail",
             Self::Floss => "Floss",
             Self::Bloss => "Bloss",
             Self::FlossPct => "Floss%",
-            Self::Dscp => "DSCP",
-            Self::Ecn => "ECN",
+            Self::Dscp => "Dscp",
+            Self::Ecn => "Ecn",
             Self::Asn => "ASN",
         }
     }
