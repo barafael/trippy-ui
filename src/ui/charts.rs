@@ -6,8 +6,10 @@
 
 use crate::state::State;
 use crate::theme;
+use crate::ui::GAP;
 use egui::Ui;
-use egui_plot::{Bar, BarChart, Line, Plot, Points};
+use egui_plot::{Bar, BarChart, Line, Plot, Points, Text};
+use std::time::Duration;
 use trippy_core::Hop;
 
 /// The width of one bar, in pixels, so the charts fill gradually instead of
@@ -61,25 +63,32 @@ fn slots(width: f32) -> usize {
     ((width / BAR_PX) as usize).max(8)
 }
 
+/// The newest `slots` samples, newest first, in microseconds; `None` is a
+/// lost probe.
+///
+/// Samples are stored newest first, so the window is the head of the slice,
+/// as in the terminal frontend's history.
+pub fn history_window(samples: &[Duration], slots: usize) -> Vec<Option<u64>> {
+    samples[..slots.min(samples.len())]
+        .iter()
+        .map(|s| (!s.is_zero()).then_some(s.as_micros() as u64))
+        .collect()
+}
+
 /// The history of the selected hop as a sparkline: one bar per sample on a
 /// fixed axis, so it fills from the left as samples arrive instead of
 /// stretching to fill the width. Lost samples are full-height bars in the lost
 /// colour, like the terminal frontend's absent value.
 fn sparkline(ui: &mut Ui, hop: &Hop, slots: usize, height: f32) {
     let p = theme::of(ui);
-    let samples = hop.samples();
-    let max = samples
-        .iter()
-        .map(|d| d.as_micros() as f64)
-        .fold(0.0_f64, f64::max);
-    let start = samples.len().saturating_sub(slots);
+    let window = history_window(hop.samples(), slots);
+    let max = window.iter().flatten().copied().max().unwrap_or(1).max(1) as f64;
     let mut bars = Vec::with_capacity(slots);
     let mut lost = Vec::new();
-    for (i, sample) in samples[start..].iter().enumerate() {
-        if sample.is_zero() {
-            lost.push(Bar::new(i as f64, max.max(1.0)).fill(p.samples_lost));
-        } else {
-            bars.push(Bar::new(i as f64, sample.as_micros() as f64).fill(p.samples));
+    for (i, sample) in window.into_iter().enumerate() {
+        match sample {
+            None => lost.push(Bar::new(i as f64, max).fill(p.samples_lost)),
+            Some(us) => bars.push(Bar::new(i as f64, us as f64).fill(p.samples)),
         }
     }
     Plot::new("history")
@@ -108,7 +117,7 @@ fn sparkline(ui: &mut Ui, hop: &Hop, slots: usize, height: f32) {
 /// block.
 fn frequency(ui: &mut Ui, hop: &Hop, height: f32) {
     let p = theme::of(ui);
-    let values = histogram(hop);
+    let values = histogram_of(hop.samples());
     let Some(max_ms) = values.last().map(|(ms, _)| *ms) else {
         return;
     };
@@ -140,14 +149,16 @@ fn frequency(ui: &mut Ui, hop: &Hop, height: f32) {
 const FREQUENCY_SPAN: u64 = 6;
 
 /// The percentage of samples per exact millisecond, as `(milliseconds, percent)`.
-fn histogram(hop: &Hop) -> Vec<(u64, u64)> {
-    let samples = hop.samples();
+///
+/// Lost probes count towards the total but have no bucket, as in the terminal
+/// frontend's histogram.
+pub fn histogram_of(samples: &[Duration]) -> Vec<(u64, u64)> {
     let total = samples.len();
     if total == 0 {
         return Vec::new();
     }
     let mut counts: std::collections::BTreeMap<u64, usize> = std::collections::BTreeMap::new();
-    for sample in samples {
+    for sample in samples.iter().filter(|s| !s.is_zero()) {
         *counts.entry(sample.as_millis() as u64).or_default() += 1;
     }
     counts
@@ -156,7 +167,16 @@ fn histogram(hop: &Hop) -> Vec<(u64, u64)> {
         .collect()
 }
 
-/// The round-trip time of every hop over the last `max_samples / zoom` samples.
+/// The newest `window` samples of a hop as chart points, newest at x = 0.
+pub fn chart_series(samples: &[Duration], window: usize) -> Vec<[f64; 2]> {
+    samples[..window.min(samples.len())]
+        .iter()
+        .enumerate()
+        .map(|(i, d)| [i as f64, d.as_secs_f64() * 1000.0])
+        .collect()
+}
+
+/// The round-trip time of every hop over the newest `max_samples / zoom` samples.
 pub fn chart(state: &State, ui: &mut Ui) {
     let p = theme::of(ui);
     let window = (state.trace().map_or(256, crate::trace::Trace::max_samples) / state.zoom).max(1);
@@ -168,23 +188,15 @@ pub fn chart(state: &State, ui: &mut Ui) {
         .hops()
         .iter()
         .enumerate()
-        .map(|(i, hop)| {
-            let samples = hop.samples();
-            let start = samples.len().saturating_sub(window);
-            let points = samples[start..]
-                .iter()
-                .enumerate()
-                .map(|(j, d)| [(start + j) as f64, d.as_secs_f64() * 1000.0])
-                .collect();
-            (i, points)
-        })
+        .map(|(i, hop)| (i, chart_series(hop.samples(), window)))
         .collect();
     let height = ui.available_height();
     Plot::new("rtt_chart")
         .height(height)
         .grid_color(p.border)
-        .x_axis_label("Samples")
+        .x_axis_label(format!("Samples ({window} at {}x)", state.zoom))
         .y_axis_label("RTT (ms)")
+        .default_x_bounds(0.0, window as f64)
         .show(ui, |plot_ui| {
             for (i, points) in lines {
                 if points.is_empty() {
@@ -207,55 +219,119 @@ pub fn chart(state: &State, ui: &mut Ui) {
         });
 }
 
-/// The flows of the trace, as a bar per flow.
-pub fn flows(state: &State, ui: &mut Ui) {
+/// The width of one flow bar with its gap, in pixels.
+const FLOW_BAR_PX: f32 = 44.0;
+
+/// The first visible flow, given the window width, the previous start and the
+/// selection: the selected flow is always kept in view, as in the terminal
+/// frontend's flows chart.
+pub fn flows_window(total: usize, visible: usize, start: usize, selected: usize) -> usize {
+    let visible = visible.max(1);
+    let mut start = start.min(total.saturating_sub(visible));
+    if selected < start {
+        start = selected;
+    } else if selected >= start + visible {
+        start = selected + 1 - visible;
+    }
+    start
+}
+
+/// The flows of the trace, as a bar per flow, scrolled to keep the selected
+/// flow visible.
+pub fn flows(state: &mut State, ui: &mut Ui) {
     let p = theme::of(ui);
+    let flows = state.flows();
     let Some(trace) = state.trace() else {
         return;
     };
-    let bars: Vec<Bar> = state
-        .flows()
+    let visible = ((ui.available_width() - 2.0 * GAP) / FLOW_BAR_PX) as usize;
+    let selected_index = flows
         .iter()
-        .enumerate()
-        .map(|(i, id)| {
-            let count = trace.snapshot.round_count(*id) as f64;
-            let color = if *id == state.selected_flow {
-                p.flows_selected
-            } else {
-                p.flows_unselected
-            };
-            Bar::new(i as f64, count).fill(color)
-        })
-        .collect();
-    let labels: Vec<(f64, String)> = state
-        .flows()
-        .iter()
-        .enumerate()
-        .map(|(i, id)| (i as f64, format!("{id}")))
-        .collect();
+        .position(|id| *id == state.selected_flow)
+        .unwrap_or(0);
+    let start = flows_window(
+        flows.len(),
+        visible,
+        state.flows_start_index,
+        selected_index,
+    );
+    let end = (start + visible.max(1)).min(flows.len());
+    let round_flow = trace.snapshot.round_flow_id();
+    let mut bars = Vec::new();
+    let mut labels = Vec::new();
+    for (x, id) in flows[start..end].iter().enumerate() {
+        let count = trace.snapshot.round_count(*id);
+        let color = if *id == state.selected_flow {
+            p.flows_selected
+        } else {
+            p.flows_unselected
+        };
+        let label_color = if *id == round_flow {
+            p.flows_current
+        } else {
+            p.flows_noncurrent
+        };
+        bars.push(Bar::new(x as f64, count as f64).fill(color));
+        labels.push(
+            Text::new(
+                format!("flow-{id}"),
+                egui_plot::PlotPoint::new(x as f64, count as f64 / 2.0),
+                egui::RichText::new(format!("{id}\n{count}"))
+                    .monospace()
+                    .strong(),
+            )
+            .color(label_color),
+        );
+    }
+    state.flows_start_index = start;
+    let (left, right) = (start > 0, end < flows.len());
     let height = ui.available_height();
-    Plot::new("flows")
+    let response = Plot::new("flows")
         .height(height)
-        .grid_color(p.border)
-        .show_axes([false, true])
-        .x_axis_formatter(move |mark, _| {
-            labels
-                .iter()
-                .find(|(x, _)| (x - mark.value).abs() < 0.5)
-                .map(|(_, name)| name.clone())
-                .unwrap_or_default()
-        })
+        .show_axes([false, false])
+        .show_grid([false, false])
+        .allow_drag(false)
+        .allow_zoom(false)
+        .allow_scroll(false)
+        .auto_bounds([false, true])
+        .default_x_bounds(-0.5, visible.max(1) as f64 - 0.5)
+        .set_margin_fraction(egui::vec2(0.0, 0.1))
         .show(ui, |plot_ui| {
             if !bars.is_empty() {
-                plot_ui.add(BarChart::new("Flows", bars).width(0.7));
+                plot_ui.add(BarChart::new("Flows", bars).width(0.8));
             }
-        });
+            for label in labels {
+                plot_ui.text(label);
+            }
+        })
+        .response;
+    let rect = response.rect;
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    if left {
+        ui.painter().text(
+            rect.left_center() + egui::vec2(4.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            "◀",
+            font.clone(),
+            p.border,
+        );
+    }
+    if right {
+        ui.painter().text(
+            rect.right_center() - egui::vec2(4.0, 0.0),
+            egui::Align2::RIGHT_CENTER,
+            "▶",
+            font,
+            p.border,
+        );
+    }
 }
 
 /// The world map with a pin per GeoIP location seen on the selected flow.
 pub fn map(state: &State, ui: &mut Ui) {
     let p = theme::of(ui);
-    let selected = state.selected_hop_or_target().map(Hop::ttl);
+    let selected_hop = state.selected_hop_or_target();
+    let selected = selected_hop.map(Hop::ttl);
     let entries = map_entries(state);
     let height = (ui.available_height() - 60.0).max(80.0);
     Plot::new("world_map")
@@ -273,7 +349,7 @@ pub fn map(state: &State, ui: &mut Ui) {
                 );
             }
             for entry in &entries {
-                let is_selected = Some(entry.ttl) == selected;
+                let is_selected = selected.is_some_and(|ttl| entry.hops.contains(&ttl));
                 let color = if is_selected {
                     p.map_selected
                 } else {
@@ -281,12 +357,9 @@ pub fn map(state: &State, ui: &mut Ui) {
                 };
                 let radius = if is_selected { 6.0 } else { 3.0 };
                 plot_ui.add(
-                    Points::new(
-                        format!("#{}", entry.ttl),
-                        vec![[entry.longitude, entry.latitude]],
-                    )
-                    .color(color)
-                    .radius(radius),
+                    Points::new(entry.name.clone(), vec![[entry.longitude, entry.latitude]])
+                        .color(color)
+                        .radius(radius),
                 );
                 if entry.radius_km > 220.0 {
                     plot_ui.line(
@@ -300,38 +373,45 @@ pub fn map(state: &State, ui: &mut Ui) {
                 }
             }
         });
-    let text = match state.geoip_enabled() {
-        false => "GeoIP not enabled (pass --geoip-mmdb-file)".to_string(),
-        true => match selected {
-            Some(ttl) => {
-                let hits: Vec<&MapEntry> = entries.iter().filter(|e| e.ttl == ttl).collect();
-                match hits.as_slice() {
-                    [] => format!("No GeoIP data for hop {ttl}"),
-                    [only] => format!(
-                        "Hop {ttl}: {} [{}, {} ~{}km]",
-                        only.name, only.latitude, only.longitude, only.radius_km
-                    ),
-                    _ => format!("Multiple GeoIP locations for hop {ttl}"),
+    let text = match (selected_hop, state.geoip_enabled()) {
+        (None, _) => String::from("Select a hop"),
+        (Some(hop), _) if state.settings.privacy_max_ttl >= Some(hop.ttl()) => {
+            String::from("**Hidden**")
+        }
+        (Some(_), false) => String::from("GeoIP not enabled (pass --geoip-mmdb-file)"),
+        (Some(hop), true) => {
+            let ttl = hop.ttl();
+            let hits: Vec<&MapEntry> = entries.iter().filter(|e| e.hops.contains(&ttl)).collect();
+            match hits.as_slice() {
+                [] if hop.addr_count() > 0 => {
+                    let addrs: Vec<String> = hop.addrs().map(ToString::to_string).collect();
+                    format!("No GeoIP data for hop {ttl} ({})", addrs.join(", "))
                 }
+                [] => format!("No GeoIP data for hop {ttl}"),
+                [only] => format!(
+                    "Hop {ttl}: {} [{}, {} ~{}km]",
+                    only.name, only.latitude, only.longitude, only.radius_km
+                ),
+                _ => format!("Multiple GeoIP locations for hop {ttl}"),
             }
-            None => String::from("Select a hop"),
-        },
+        }
     };
     ui.label(egui::RichText::new(text).color(p.text));
 }
 
-/// One GeoIP location on the map.
+/// One GeoIP location on the map, shared by every hop seen there.
 struct MapEntry {
-    ttl: u8,
     name: String,
     latitude: f64,
     longitude: f64,
     radius_km: f64,
+    hops: Vec<u8>,
 }
 
-/// Every GeoIP location of the visible hops, hiding private ones.
+/// Every GeoIP location of the visible hops, hiding private ones, one entry
+/// per distinct place.
 fn map_entries(state: &State) -> Vec<MapEntry> {
-    let mut entries = Vec::new();
+    let mut entries: Vec<MapEntry> = Vec::new();
     for hop in state.hops() {
         if state.settings.privacy_max_ttl >= Some(hop.ttl()) {
             continue;
@@ -340,16 +420,24 @@ fn map_entries(state: &State) -> Vec<MapEntry> {
             let Ok(Some(city)) = state.geoip.lookup(*addr) else {
                 continue;
             };
-            let Some((latitude, longitude, radius)) = city.position() else {
+            let Some((latitude, longitude, radius)) = city.coordinates() else {
                 continue;
             };
-            entries.push(MapEntry {
-                ttl: hop.ttl(),
-                name: city.long_name(),
-                latitude,
-                longitude,
-                radius_km: f64::from(radius),
-            });
+            let name = city.long_name();
+            match entries.iter_mut().find(|e| e.name == name) {
+                Some(entry) => {
+                    if !entry.hops.contains(&hop.ttl()) {
+                        entry.hops.push(hop.ttl());
+                    }
+                }
+                None => entries.push(MapEntry {
+                    name,
+                    latitude,
+                    longitude,
+                    radius_km: f64::from(radius),
+                    hops: vec![hop.ttl()],
+                }),
+            }
         }
     }
     entries

@@ -11,6 +11,9 @@ use crate::format;
 use crate::state::{Prompt, State};
 use crate::theme;
 use egui::{Align, Align2, Color32, CursorIcon, Label, Layout, RichText, Sense, Ui};
+use std::net::IpAddr;
+use std::time::Duration;
+use trippy_core::{PortDirection, Protocol};
 
 /// Horizontal gap between unrelated items.
 pub const GAP: f32 = 10.0;
@@ -122,6 +125,10 @@ pub fn render(state: &mut State, ui: &mut Ui) -> Option<Command> {
                     ui,
                     RichText::new(message).color(ui.visuals().error_fg_color),
                 );
+            } else if let Some(error) = state.trace().and_then(crate::trace::Trace::failure) {
+                render_failure(ui, error);
+            } else if state.hops().is_empty() {
+                render_splash(ui);
             } else if state.show_chart {
                 charts::chart(state, ui);
             } else if state.show_map {
@@ -149,6 +156,38 @@ pub fn render(state: &mut State, ui: &mut Ui) -> Option<Command> {
 /// Fills the body with one centered message.
 pub fn centered_message(ui: &mut Ui, text: RichText) {
     ui.centered_and_justified(|ui| ui.label(text));
+}
+
+/// The body before the first round completes: the logo and a waiting note.
+fn render_splash(ui: &mut Ui) {
+    let p = theme::of(ui);
+    section_bar(ui, "Hops", "", true);
+    ui.add_space(ui.available_height() * 0.3);
+    ui.vertical_centered(|ui| {
+        ui.monospace(RichText::new(LOGO).color(p.text));
+        ui.add_space(GAP);
+        ui.label(RichText::new("Awaiting data...").italics().color(p.weak));
+    });
+}
+
+/// The body when the tracer has failed, in place of the terminal frontend's
+/// blue screen.
+fn render_failure(ui: &mut Ui, error: &str) {
+    let p = theme::of(ui);
+    section_bar(ui, "Hops", "", true);
+    ui.add_space(ui.available_height() * 0.3);
+    ui.vertical_centered(|ui| {
+        ui.label(
+            RichText::new(" Trippy Failed ")
+                .strong()
+                .color(p.on_accent)
+                .background_color(p.red),
+        );
+        ui.add_space(GAP);
+        ui.label(RichText::new(error).color(p.text));
+        ui.add_space(GAP);
+        ui.label(RichText::new("Press q to quit").color(p.weak));
+    });
 }
 
 /// A clickable key cap followed by its description.
@@ -290,25 +329,39 @@ fn next_address_mode(mode: crate::config::AddressMode) -> crate::config::Address
 }
 
 fn status_line(state: &State, trace: &crate::trace::Trace) -> String {
-    if let Some(error) = &trace.error {
-        return format!("Failed: {error}");
+    if trace.failure().is_some() {
+        return String::from("Failed");
     }
-    if let Some(start) = state.frozen_start {
-        let elapsed = start.elapsed().unwrap_or_default();
-        return format!("Frozen ({})", humantime::format_duration(elapsed));
-    }
+    let (failed, total) = state.failures();
+    let failures = if failed > 0 {
+        let rate = if total > 0 {
+            failed as f64 / total as f64 * 100.0
+        } else {
+            0.0
+        };
+        format!(" [{failed} of {total} ({rate:.1}%) ❗]")
+    } else {
+        String::new()
+    };
+    let status = if let Some(start) = state.frozen_start {
+        let elapsed = Duration::from_secs(start.elapsed().unwrap_or_default().as_secs());
+        format!("Frozen ({})", humantime::format_duration(elapsed))
+    } else {
+        String::from("Running")
+    };
     let hops = state.hops().len();
     let flows = trace.snapshot.flows().len();
     if trace.max_flows() > 1 {
-        format!("Running, discovered {hops} hops and {flows} unique flows")
+        let plural = if flows == 1 { "flow" } else { "flows" };
+        format!("{status}{failures}, discovered {hops} hops and {flows} unique {plural}")
     } else {
-        format!("Running, discovered {hops} hops")
+        format!("{status}{failures}, discovered {hops} hops")
     }
 }
 
 fn status_color(state: &State, ui: &Ui) -> Color32 {
     let p = theme::of(ui);
-    if state.trace().is_some_and(|t| t.error.is_some()) {
+    if state.trace().is_some_and(|t| t.failure().is_some()) {
         p.red
     } else if state.frozen() {
         p.yellow
@@ -326,15 +379,18 @@ fn render_info_bar(state: &mut State, ui: &mut Ui) -> Option<Command> {
         .inner_margin(egui::Margin::symmetric(GAP as i8, 3))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                let protocol = format!(
-                    "{}/{}",
-                    match state.trace_config.addr_family {
-                        trippy_dns::IpAddrFamily::Ipv4Only => "IPv4",
-                        trippy_dns::IpAddrFamily::Ipv6Only => "IPv6",
-                        _ => "IPv4/6",
-                    },
-                    state.trace_config.protocol
-                );
+                let family = match state.trace().map(|t| t.target_addr) {
+                    Some(IpAddr::V4(_)) => "IPv4",
+                    Some(IpAddr::V6(_)) => "IPv6",
+                    None => "IP",
+                };
+                let protocol = match state.trace_config.protocol {
+                    Protocol::Icmp => format!("{family}/ICMP"),
+                    Protocol::Udp => {
+                        format!("{family}/UDP/{}", state.trace_config.multipath_strategy)
+                    }
+                    Protocol::Tcp => format!("{family}/TCP"),
+                };
                 ui.label(RichText::new(protocol).monospace().color(p.info_bar_text));
                 ui.label(
                     RichText::new(match state.trace_config.privilege_mode {
@@ -471,28 +527,40 @@ fn endpoint_source(state: &State) -> String {
     let Some(addr) = trace.source_addr() else {
         return String::from("unknown");
     };
-    let suffix = match state.trace_config.port_direction.src() {
-        Some(port) => format!(":{}", port.0),
-        None => String::new(),
+    let suffix = match state.trace_config.port_direction {
+        PortDirection::None => String::new(),
+        PortDirection::FixedDest(_) => String::from(":*"),
+        PortDirection::FixedSrc(src) | PortDirection::FixedBoth(src, _) => format!(":{}", src.0),
     };
-    endpoint(addr, &suffix, state)
+    let name = format::reverse_hostname(&state.resolver, addr);
+    endpoint(addr, &suffix, name.as_deref())
 }
 
-/// The target endpoint with its hostname.
+/// The target endpoint with its hostname: the name given on the command
+/// line, or the reverse name of a target given as an address.
 pub fn endpoint_target(state: &State) -> String {
     let Some(trace) = state.trace() else {
         return String::from("unknown");
     };
-    let suffix = match state.trace_config.port_direction.dest() {
-        Some(port) => format!(":{}", port.0),
-        None => String::new(),
+    let suffix = match state.trace_config.port_direction {
+        PortDirection::None => String::new(),
+        PortDirection::FixedSrc(_) => String::from(":*"),
+        PortDirection::FixedDest(dest) | PortDirection::FixedBoth(_, dest) => {
+            format!(":{}", dest.0)
+        }
     };
-    endpoint(trace.target_addr, &suffix, state)
+    let name = if trace.hostname.parse::<IpAddr>().is_ok() {
+        format::reverse_hostname(&state.resolver, trace.target_addr)
+            .filter(|name| *name != trace.hostname)
+    } else {
+        Some(trace.hostname.clone())
+    };
+    endpoint(trace.target_addr, &suffix, name.as_deref())
 }
 
 /// An endpoint as `addr[:port] (hostname)`.
-fn endpoint(addr: std::net::IpAddr, suffix: &str, state: &State) -> String {
-    match format::reverse_hostname(&state.resolver, addr) {
+fn endpoint(addr: IpAddr, suffix: &str, name: Option<&str>) -> String {
+    match name {
         Some(name) => format!("{addr}{suffix} ({name})"),
         None => format!("{addr}{suffix}"),
     }

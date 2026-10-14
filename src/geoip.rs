@@ -66,15 +66,6 @@ impl City {
             _ => None,
         }
     }
-
-    /// The coordinates, if known, using a zero radius as a fallback.
-    pub fn position(&self) -> Option<(f64, f64, u16)> {
-        Some((
-            self.latitude?,
-            self.longitude?,
-            self.accuracy_radius.unwrap_or(0),
-        ))
-    }
 }
 
 impl From<(maxminddb::geoip2::City<'_>, &str)> for City {

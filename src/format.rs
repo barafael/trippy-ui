@@ -399,6 +399,9 @@ fn format_unknown(unknown: &UnknownExtension) -> String {
 }
 
 /// The expanded details of one address of a hop, one line per field.
+///
+/// Hidden and unanswered hops show the same text as the host cell, so detail
+/// mode and copying never reveal a hop that privacy mode hides.
 pub fn details(
     hop: &Hop,
     offset: usize,
@@ -406,6 +409,12 @@ pub fn details(
     geoip: &geoip::Lookup,
     settings: &Settings,
 ) -> String {
+    if hop.total_recv() == 0 {
+        return "No response".into();
+    }
+    if settings.privacy_max_ttl >= Some(hop.ttl()) {
+        return "**Hidden**".into();
+    }
     let Some(addr) = hop.addrs().nth(offset) else {
         return format!("Error: no addr for index {offset}");
     };

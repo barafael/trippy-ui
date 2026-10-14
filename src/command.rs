@@ -79,8 +79,6 @@ pub enum Command {
     Input(InputCommand),
     /// Quit.
     Exit,
-    /// Quit, keeping the last frame on screen where that is meaningful.
-    ExitPreserveScreen,
 }
 
 /// A prompt command.
@@ -144,7 +142,6 @@ impl Command {
             Self::Input(InputCommand::Enter) => "search",
             Self::Input(_) => "prompt",
             Self::Exit => "quit",
-            Self::ExitPreserveScreen => "quit-preserve-screen",
         }
     }
 }
@@ -280,7 +277,6 @@ pub const BINDINGS: &[(Modifiers, Key, Command)] = &[
     (Modifiers::NONE, Key::Num6, Command::ShowSettingsTab(5)),
     (Modifiers::NONE, Key::Num7, Command::ShowSettingsTab(6)),
     (Modifiers::NONE, Key::Escape, Command::ClearSelection),
-    (Modifiers::SHIFT, Key::Q, Command::ExitPreserveScreen),
     (Modifiers::NONE, Key::Q, Command::Exit),
 ];
 
@@ -571,10 +567,7 @@ mod tests {
 
     #[test]
     fn shifted_bindings_win() {
-        assert_eq!(
-            binding(Key::Q, Modifiers::SHIFT),
-            Some(Command::ExitPreserveScreen)
-        );
+        assert_eq!(binding(Key::Q, Modifiers::SHIFT), Some(Command::Exit));
         assert_eq!(binding(Key::Q, Modifiers::NONE), Some(Command::Exit));
         assert_eq!(
             binding(Key::Slash, Modifiers::SHIFT),

@@ -18,8 +18,16 @@ pub struct Trace {
     pub target_addr: IpAddr,
     /// The latest snapshot.
     pub snapshot: State,
-    /// Why the trace stopped, if it failed.
+    /// Why the tracing thread stopped, if it failed.
     pub error: Option<String>,
+}
+
+impl Trace {
+    /// Why the trace failed: the error the tracer recorded in its state, or
+    /// the one its thread returned.
+    pub fn failure(&self) -> Option<&str> {
+        self.snapshot.error().or(self.error.as_deref())
+    }
 }
 
 impl Trace {

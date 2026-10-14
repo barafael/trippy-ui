@@ -114,6 +114,8 @@ pub struct State {
     pub selected_flow: FlowId,
     /// The selected address of the selected hop, in detail mode.
     pub selected_hop_address: usize,
+    /// The first flow shown in the flows strip.
+    pub flows_start_index: usize,
     /// The help overlay is open.
     pub show_help: bool,
     /// The settings dialog is open.
@@ -168,6 +170,7 @@ impl State {
             rows: Vec::new(),
             selected_flow: FlowId(0),
             selected_hop_address: 0,
+            flows_start_index: 0,
             show_help: false,
             show_settings: false,
             settings_tab: SettingsTab::Tui,
@@ -350,6 +353,9 @@ impl State {
                 self.settings_item = self.settings_tab.count().saturating_sub(1);
             }
             Command::Activate => self.activate_setting(),
+            Command::ToggleChart if self.settings_tab == SettingsTab::Columns => {
+                self.settings.columns.toggle(self.settings_item);
+            }
             Command::Next(ScrollType::Address, _) if self.settings_tab == SettingsTab::Columns => {
                 self.settings.columns.move_down(self.settings_item);
                 self.move_settings_item(1, 1);
@@ -369,7 +375,7 @@ impl State {
             Command::ShowHelp => self.show_help = true,
             Command::ShowSettings => self.show_settings = true,
             Command::ShowSettingsTab(tab) => self.open_settings_tab(tab),
-            Command::Exit | Command::ExitPreserveScreen => self.running = false,
+            Command::Exit => self.running = false,
             Command::ClearSelection => {
                 self.selection.clear();
                 self.selected_hop_address = 0;
@@ -378,9 +384,7 @@ impl State {
                 Some(text) => crate::ui::copy(ctx, text),
                 None => self.notice = Some(String::from("Nothing to copy")),
             },
-            Command::Activate | Command::ToggleHopDetails => {
-                self.settings.show_hop_details = !self.settings.show_hop_details;
-            }
+            Command::Activate | Command::ToggleHopDetails => self.toggle_hop_details(),
             Command::Next(ScrollType::Tab, n) => {
                 if self.show_flows {
                     self.move_flow(n, true);
@@ -591,6 +595,17 @@ impl State {
         };
     }
 
+    /// Shows or hides the hop details; detail mode shows one address per hop,
+    /// as in the terminal frontend.
+    fn toggle_hop_details(&mut self) {
+        self.settings.max_addrs = if self.settings.show_hop_details {
+            None
+        } else {
+            Some(1)
+        };
+        self.settings.show_hop_details = !self.settings.show_hop_details;
+    }
+
     fn toggle_flows(&mut self) {
         let max_flows = self.trace().map_or(1, Trace::max_flows);
         if self.traces.len() != 1 || max_flows <= 1 {
@@ -603,9 +618,11 @@ impl State {
             self.selected_flow = FlowId(0);
             self.show_flows = false;
         } else if !self.flows().is_empty() {
-            self.selected_flow = self.flows()[0];
+            self.selected_flow = FlowId(1);
             self.show_flows = true;
         }
+        self.selected_hop_address = 0;
+        self.flows_start_index = 0;
     }
 
     /// The flows to show in the flows view, most rounds first.
@@ -660,6 +677,15 @@ impl State {
             .map(|column| format::cell(column, hop, &self.resolver, &self.geoip, &self.settings))
             .collect();
         (!cells.is_empty()).then(|| cells.join("\t"))
+    }
+
+    /// Probes that failed to send on the selected flow, with the total sent.
+    pub fn failures(&self) -> (usize, usize) {
+        let hops = self.hops();
+        (
+            hops.iter().map(Hop::total_failed).sum(),
+            hops.iter().map(Hop::total_sent).sum(),
+        )
     }
 
     /// Key hints for the status bar.
