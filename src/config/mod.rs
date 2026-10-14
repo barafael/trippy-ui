@@ -590,6 +590,7 @@ pub fn build(
         key_bindings.push((item, value));
     }
     let bindings = Bindings::from_items(&key_bindings)?;
+    crate::theme::colors::validate(&theme_colors)?;
 
     Ok(Options {
         targets: args.targets,
@@ -987,6 +988,8 @@ mod tests {
         assert!(message(&["--udp", "-R", "paris", "-u", "x"]).contains("unprivileged"));
         assert!(message(&["--tui-timezone", "Mars/Olympus", "x"]).contains("timezone"));
         assert!(message(&["--tui-custom-columns", "hh", "x"]).contains("duplicate"));
+        assert!(message(&["--tui-theme-colors", "bg-color=octarine", "x"]).contains("color"));
+        assert!(message(&["--tui-theme-colors", "nope=red", "x"]).contains("theme item"));
         assert!(
             with_file(&["x"], "[tui]\ntui-max-samples = 5")
                 .unwrap_err()

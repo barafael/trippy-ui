@@ -27,6 +27,8 @@ impl TrippyApp {
             .unwrap_or_default();
         let mut options = options;
         options.settings.theme = settings;
+        // Validated at startup, so this cannot fail.
+        let _ = options.settings.theme.apply_items(&options.theme_colors);
         theme::install(&cc.egui_ctx, &options.settings.theme);
         Self {
             state: State::new(options, geoip),

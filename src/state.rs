@@ -16,6 +16,9 @@ use trippy_dns::{Config as DnsConfig, DnsResolver, ResolveMethod};
 /// The maximum chart zoom.
 pub const MAX_ZOOM: usize = 16;
 
+/// The rows of the Theme tab before the colour slots: palette and mode.
+pub const THEME_FIXED_ITEMS: usize = 2;
+
 /// Which prompt is open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Prompt {
@@ -75,7 +78,7 @@ impl SettingsTab {
             SettingsTab::Dns => 5,
             SettingsTab::GeoIp => 1,
             SettingsTab::Bindings => Item::ALL.len(),
-            SettingsTab::Theme => theme::Slot::ALL.len(),
+            SettingsTab::Theme => THEME_FIXED_ITEMS + theme::Slot::ALL.len(),
             SettingsTab::Columns => crate::columns::ALL.len(),
         }
     }
@@ -584,11 +587,15 @@ impl State {
                     self.resolver.flush();
                 }
             }
-            SettingsTab::Theme => {
-                if let Some(slot) = theme::Slot::ALL.get(self.settings_item) {
-                    self.settings.theme.overrides.remove(slot);
+            SettingsTab::Theme => match self.settings_item {
+                0 => self.settings.theme.family = self.settings.theme.family.next(),
+                1 => self.settings.theme.cycle_mode(),
+                i => {
+                    if let Some(slot) = theme::Slot::ALL.get(i - THEME_FIXED_ITEMS) {
+                        self.settings.theme.overrides.remove(slot);
+                    }
                 }
-            }
+            },
             SettingsTab::Columns => self.settings.columns.toggle(self.settings_item),
             _ => {}
         }

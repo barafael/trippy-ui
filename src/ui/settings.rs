@@ -2,7 +2,7 @@
 
 use crate::command::Command;
 use crate::config::{AddressMode, AsMode, GeoIpMode, IcmpExtensionMode, Named};
-use crate::state::{SettingsTab, State};
+use crate::state::{SettingsTab, State, THEME_FIXED_ITEMS};
 use crate::theme;
 use crate::ui::{GAP, section_bar, tab_strip};
 use egui::{Color32, RichText, Sense, Ui};
@@ -64,7 +64,10 @@ fn info(state: &State) -> String {
         SettingsTab::Bindings => {
             "The key map; change it with --tui-key-bindings or the [bindings] section.".into()
         }
-        SettingsTab::Theme => "Enter or click a colour to reset it to the palette default.".into(),
+        SettingsTab::Theme => {
+            "Enter cycles the palette and mode; Enter on a colour resets it to the palette default."
+                .into()
+        }
         SettingsTab::Columns => {
             "Enter toggles a column; , and . move the selected column up and down.".into()
         }
@@ -339,14 +342,50 @@ fn render_bindings(state: &mut State, ui: &mut Ui) {
 
 fn render_theme(state: &mut State, ui: &mut Ui) {
     let dark = ui.visuals().dark_mode;
+    let family = state.settings.theme.family;
+    if row(ui, state.settings_item == 0, "palette", |ui| {
+        egui::ComboBox::from_id_salt("theme_family")
+            .selected_text(family.name())
+            .show_ui(ui, |ui| {
+                for candidate in theme::Family::ALL {
+                    if ui
+                        .selectable_label(candidate == family, candidate.name())
+                        .clicked()
+                    {
+                        state.settings.theme.family = candidate;
+                    }
+                }
+            });
+    }) {
+        state.settings_item = 0;
+    }
+    let mode = state.settings.theme.mode;
+    if row(ui, state.settings_item == 1, "mode", |ui| {
+        egui::ComboBox::from_id_salt("theme_mode")
+            .selected_text(state.settings.theme.mode_name())
+            .show_ui(ui, |ui| {
+                for (candidate, name) in [
+                    (egui::ThemePreference::System, "system"),
+                    (egui::ThemePreference::Light, "light"),
+                    (egui::ThemePreference::Dark, "dark"),
+                ] {
+                    if ui.selectable_label(candidate == mode, name).clicked() {
+                        state.settings.theme.mode = candidate;
+                    }
+                }
+            });
+    }) {
+        state.settings_item = 1;
+    }
     for (i, slot) in theme::Slot::ALL.iter().enumerate() {
+        let item = i + THEME_FIXED_ITEMS;
         let mut color = state.settings.theme.slot(*slot, dark);
-        if row(ui, state.settings_item == i, slot.name(), |ui| {
+        if row(ui, state.settings_item == item, slot.name(), |ui| {
             if ui.color_edit_button_srgba(&mut color).changed() {
                 state.settings.theme.set_slot(*slot, color);
             }
         }) {
-            state.settings_item = i;
+            state.settings_item = item;
         }
     }
 }

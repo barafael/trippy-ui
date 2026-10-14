@@ -5,6 +5,8 @@
 //! theme is a handful of colours rather than three dozen, while still allowing
 //! every slot to be overridden from the settings dialog.
 
+pub mod colors;
+
 use egui::{Color32, CornerRadius, FontId, Shadow, Stroke, Style, TextStyle, ThemePreference, Ui};
 use std::collections::BTreeMap;
 
@@ -234,6 +236,12 @@ impl Family {
         }
     }
 
+    /// The family after this one, wrapping around.
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|f| *f == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+
     /// The dark or light variant.
     pub const fn palette(self, dark: bool) -> &'static Palette {
         match (self, dark) {
@@ -411,6 +419,35 @@ impl Settings {
             .insert(slot, [color.r(), color.g(), color.b()]);
     }
 
+    /// Applies trippy `item=colour` pairs as overrides; items the window has
+    /// no counterpart for are ignored.
+    pub fn apply_items(&mut self, items: &[(String, String)]) -> anyhow::Result<()> {
+        for (item, color) in items {
+            if let Some(slot) = colors::slot_for_item(item)? {
+                self.set_slot(slot, colors::parse(color)?);
+            }
+        }
+        Ok(())
+    }
+
+    /// The mode after this one: system, light, dark.
+    pub fn cycle_mode(&mut self) {
+        self.mode = match self.mode {
+            ThemePreference::System => ThemePreference::Light,
+            ThemePreference::Light => ThemePreference::Dark,
+            ThemePreference::Dark => ThemePreference::System,
+        };
+    }
+
+    /// The mode's name in the settings.
+    pub const fn mode_name(&self) -> &'static str {
+        match self.mode {
+            ThemePreference::System => "system",
+            ThemePreference::Light => "light",
+            ThemePreference::Dark => "dark",
+        }
+    }
+
     /// Stored form, e.g. `gruvbox/dark;accent=f8be75`.
     pub fn to_stored(&self) -> String {
         let mode = match self.mode {
@@ -569,6 +606,36 @@ mod tests {
             Color32::from_rgb(0x12, 0x34, 0x56)
         );
         assert_eq!(Settings::from_stored("nonsense"), Settings::default());
+    }
+
+    #[test]
+    fn trippy_items_become_overrides() {
+        let mut settings = Settings::default();
+        settings
+            .apply_items(&[
+                (String::from("samples-chart-color"), String::from("red")),
+                (
+                    String::from("settings-tab-text-color"),
+                    String::from("blue"),
+                ),
+                (String::from("bg-color"), String::from("#102030")),
+            ])
+            .unwrap();
+        assert_eq!(
+            settings.slot(Slot::samples, true),
+            Color32::from_rgb(0xcd, 0, 0)
+        );
+        assert_eq!(
+            settings.slot(Slot::bg, true),
+            Color32::from_rgb(0x10, 0x20, 0x30)
+        );
+        assert_eq!(settings.overrides.len(), 2);
+        assert!(
+            settings
+                .apply_items(&[(String::from("bg-color"), String::from("octarine"))])
+                .is_err()
+        );
+        assert_eq!(Family::Catppuccin.next(), Family::Default);
     }
 
     #[test]
