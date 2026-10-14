@@ -383,13 +383,16 @@ pub fn map(state: &State, ui: &mut Ui) {
     let selected_hop = state.selected_hop_or_target();
     let selected = selected_hop.map(Hop::ttl);
     let entries = map_entries(state);
-    let height = (ui.available_height() - 60.0).max(80.0);
+    let height = (ui.available_height() - 64.0).max(80.0);
     Plot::new("world_map")
         .height(height)
         .allow_drag(false)
         .allow_zoom(false)
         .allow_scroll(false)
-        .grid_color(p.border)
+        .show_axes([false, false])
+        .show_grid([false, false])
+        .default_x_bounds(-180.0, 180.0)
+        .default_y_bounds(-90.0, 90.0)
         .show(ui, |plot_ui| {
             for polyline in crate::world::WORLD {
                 plot_ui.line(
@@ -446,7 +449,16 @@ pub fn map(state: &State, ui: &mut Ui) {
             }
         }
     };
-    ui.label(egui::RichText::new(text).color(p.text));
+    let title = selected.map_or_else(|| String::from("Hop"), |ttl| format!("Hop {ttl}"));
+    ui.add_space(4.0);
+    egui::Frame::NONE
+        .stroke(egui::Stroke::new(1.0, p.border))
+        .inner_margin(egui::Margin::symmetric(GAP as i8, 4))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width() - 2.0 * GAP);
+            ui.label(egui::RichText::new(title).small().color(p.label));
+            ui.label(egui::RichText::new(text).color(p.text));
+        });
 }
 
 /// One GeoIP location on the map, shared by every hop seen there.

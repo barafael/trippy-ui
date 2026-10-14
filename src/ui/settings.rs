@@ -80,6 +80,18 @@ type Change = Box<dyn FnOnce(&mut State)>;
 /// The rows of the selected tab, each with its control.
 fn render_items(state: &mut State, ui: &mut Ui) {
     let items = state.settings_items(state.settings_tab);
+    let p = theme::of(ui);
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(GAP as i8, 3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.set_min_width(240.0);
+                ui.label(RichText::new("Setting").strong().color(p.label));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new("Value").strong().color(p.label));
+                });
+            });
+        });
     // A control's change is applied after the loop, once `state` is free.
     let mut change: Option<Change> = None;
     let mut select = None;
