@@ -5,6 +5,7 @@ pub mod charts;
 pub mod settings;
 pub mod table;
 
+use crate::bindings::Item;
 use crate::command::{self, Command};
 use crate::config::Named;
 use crate::format;
@@ -249,21 +250,22 @@ fn render_status(state: &State, ui: &mut Ui) -> Option<Command> {
                     });
                     ui.add_space(GAP * 2.0);
                 }
-                for (keys, description) in state.key_bindings() {
-                    let commands = command::hinted(keys);
+                for hint in state.hints() {
                     let pulse = state
                         .pressed
                         .as_ref()
                         .filter(|(pressed, _)| {
-                            commands.iter().any(|c| command::same_action(c, pressed))
+                            hint.commands
+                                .iter()
+                                .any(|c| command::same_action(c, pressed))
                         })
                         .map_or(0.0, |(_, at)| 1.0 - ((now - at) / PULSE).clamp(0.0, 1.0));
                     if pulse > 0.0 {
                         ui.ctx().request_repaint();
                     }
-                    let clickable = commands.len() == 1 && state.prompt.is_none();
-                    if key_hint(ui, keys, description, pulse as f32, clickable) {
-                        clicked = commands.into_iter().next();
+                    let clickable = hint.commands.len() == 1 && state.prompt.is_none();
+                    if key_hint(ui, &hint.keys, hint.label, pulse as f32, clickable) {
+                        clicked = hint.commands.into_iter().next();
                     }
                     ui.add_space(GAP);
                 }
@@ -585,13 +587,21 @@ fn render_help(state: &mut State, ui: &mut Ui) -> Option<Command> {
         .inner_margin(0.0)
         .stroke(egui::Stroke::new(1.0, p.accent));
     let mut command = None;
+    let close = format!(
+        "{}, {}, {} or {} to close",
+        state.bindings.display(Item::ToggleHelp),
+        state.bindings.display(Item::ToggleHelpAlt),
+        state.bindings.display(Item::ClearSelection),
+        state.bindings.display(Item::Quit),
+    );
     egui::Modal::new(egui::Id::new("help"))
         .frame(frame)
         .backdrop_color(Color32::from_black_alpha(160))
         .show(ui.ctx(), |ui| {
             let screen = ui.ctx().content_rect();
-            ui.set_max_width(screen.width() * 0.6);
-            section_bar(ui, "Help", "h, ?, Esc or q to close", true);
+            ui.set_max_width(screen.width() * 0.7);
+            ui.set_min_width(screen.width() * 0.5);
+            section_bar(ui, "Help", &close, true);
             egui::Frame::NONE.inner_margin(GAP).show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.monospace(LOGO);
@@ -601,30 +611,26 @@ fn render_help(state: &mut State, ui: &mut Ui) -> Option<Command> {
                             .italics()
                             .color(p.weak),
                     );
-                    ui.add_space(GAP);
                 });
-                ui.separator();
-                egui::Grid::new("help_keys")
-                    .num_columns(2)
-                    .spacing([GAP * 2.0, 4.0])
+                ui.add_space(GAP);
+                egui::ScrollArea::vertical()
+                    .max_height(screen.height() * 0.55)
                     .show(ui, |ui| {
-                        for (keys, description) in state.view_key_bindings() {
-                            ui.monospace(RichText::new(keys).color(p.accent));
-                            ui.label(RichText::new(description).color(p.text));
-                            ui.end_row();
-                        }
+                        render_help_keys(state, ui);
                     });
                 ui.add_space(GAP);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Press").color(p.weak));
-                    if ui.link(RichText::new("s").color(p.accent)).clicked() {
+                    let settings = state.bindings.display(Item::ToggleSettings);
+                    if ui.link(RichText::new(settings).color(p.accent)).clicked() {
                         command = Some(Command::ShowSettings);
                     }
                     ui.label(RichText::new("for all settings, or").color(p.weak));
-                    if ui.link(RichText::new("5").color(p.accent)).clicked() {
+                    let bindings = state.bindings.display(Item::ToggleSettingsBindings);
+                    if ui.link(RichText::new(bindings).color(p.accent)).clicked() {
                         command = Some(Command::ShowSettingsTab(4));
                     }
-                    ui.label(RichText::new("for all key bindings.").color(p.weak));
+                    ui.label(RichText::new("for the key map.").color(p.weak));
                 });
                 ui.add_space(GAP);
                 ui.label(RichText::new("https://github.com/fujiapple852/trippy").color(p.weak));
@@ -632,6 +638,95 @@ fn render_help(state: &mut State, ui: &mut Ui) -> Option<Command> {
             });
         });
     command
+}
+
+/// The key groups of the help overlay: trippy's commands, then the window's.
+const HELP_GROUPS: &[(&str, &[Item])] = &[
+    (
+        "Hops",
+        &[
+            Item::NextHop,
+            Item::PreviousHop,
+            Item::NextHopAddress,
+            Item::PreviousHopAddress,
+            Item::ClearSelection,
+            Item::NextTrace,
+            Item::PreviousTrace,
+        ],
+    ),
+    (
+        "Views",
+        &[
+            Item::ToggleChart,
+            Item::ChartZoomIn,
+            Item::ChartZoomOut,
+            Item::ToggleMap,
+            Item::ToggleFlows,
+            Item::ToggleHopDetails,
+            Item::ToggleFreeze,
+        ],
+    ),
+    (
+        "Hosts",
+        &[
+            Item::AddressModeIp,
+            Item::AddressModeHost,
+            Item::AddressModeBoth,
+            Item::ToggleAsInfo,
+            Item::ExpandHosts,
+            Item::ContractHosts,
+            Item::ExpandHostsMax,
+            Item::ContractHostsMin,
+            Item::ExpandPrivacy,
+            Item::ContractPrivacy,
+        ],
+    ),
+    ("Data", &[Item::ClearTraceData, Item::ClearDnsCache]),
+    (
+        "Dialogs",
+        &[
+            Item::ToggleHelp,
+            Item::ToggleHelpAlt,
+            Item::ToggleSettings,
+            Item::ToggleSettingsTui,
+            Item::ToggleSettingsTrace,
+            Item::ToggleSettingsDns,
+            Item::ToggleSettingsGeoip,
+            Item::ToggleSettingsBindings,
+            Item::ToggleSettingsTheme,
+            Item::ToggleSettingsColumns,
+        ],
+    ),
+    ("Quit", &[Item::Quit, Item::QuitPreserveScreen]),
+];
+
+/// Every key, grouped, in two columns of key and description.
+fn render_help_keys(state: &State, ui: &mut Ui) {
+    let p = theme::of(ui);
+    let heading = |ui: &mut Ui, title: &str| {
+        ui.add_space(4.0);
+        ui.label(RichText::new(title).strong().color(p.label));
+        ui.add_space(2.0);
+    };
+    let row = |ui: &mut Ui, keys: &str, description: &str| {
+        ui.horizontal(|ui| {
+            ui.add_sized(
+                [120.0, ui.spacing().interact_size.y],
+                Label::new(RichText::new(keys).monospace().color(p.accent)),
+            );
+            ui.label(RichText::new(description).color(p.text));
+        });
+    };
+    for (title, items) in HELP_GROUPS {
+        heading(ui, title);
+        for item in *items {
+            row(ui, &state.bindings.display(*item), item.description());
+        }
+    }
+    heading(ui, "Window");
+    for (keys, description) in crate::bindings::EXTRA_HELP {
+        row(ui, keys, description);
+    }
 }
 
 const LOGO: &str = "\

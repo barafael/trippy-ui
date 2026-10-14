@@ -22,7 +22,17 @@ pub fn render(state: &mut State, ui: &mut Ui) -> Option<Command> {
             let screen = ui.ctx().content_rect();
             ui.set_max_width(screen.width() * 0.72);
             ui.set_min_width(screen.width() * 0.42);
-            section_bar(ui, "Settings", "s, Esc or q to close", true);
+            let close = format!(
+                "{}, {} or {} to close",
+                state
+                    .bindings
+                    .display(crate::bindings::Item::ToggleSettings),
+                state
+                    .bindings
+                    .display(crate::bindings::Item::ClearSelection),
+                state.bindings.display(crate::bindings::Item::Quit),
+            );
+            section_bar(ui, "Settings", &close, true);
             let titles: Vec<&str> = SettingsTab::ALL.iter().map(|tab| tab.title()).collect();
             if let Some(i) = tab_strip(ui, &titles, state.settings_tab as usize, true, "") {
                 command = Some(Command::ShowSettingsTab(i));
@@ -51,7 +61,9 @@ fn info(state: &State) -> String {
         SettingsTab::Trace => "Tracing parameters, fixed when the tracers start.".into(),
         SettingsTab::Dns => "DNS resolution settings.".into(),
         SettingsTab::GeoIp => "The MaxMind database file, given with --geoip-mmdb-file.".into(),
-        SettingsTab::Bindings => "The key map, as configured by the terminal frontend.".into(),
+        SettingsTab::Bindings => {
+            "The key map; change it with --tui-key-bindings or the [bindings] section.".into()
+        }
         SettingsTab::Theme => "Enter or click a colour to reset it to the palette default.".into(),
         SettingsTab::Columns => {
             "Enter toggles a column; , and . move the selected column up and down.".into()
@@ -315,8 +327,9 @@ fn render_geoip(state: &mut State, ui: &mut Ui) {
 }
 
 fn render_bindings(state: &mut State, ui: &mut Ui) {
-    for (i, (keys, label)) in crate::command::bindings().into_iter().enumerate() {
-        if row(ui, state.settings_item == i, label, |ui| {
+    for (i, item) in crate::bindings::Item::ALL.into_iter().enumerate() {
+        let keys = state.bindings.display(item);
+        if row(ui, state.settings_item == i, item.name(), |ui| {
             value_text(ui, keys)
         }) {
             state.settings_item = i;

@@ -5,6 +5,7 @@
 
 pub mod file;
 
+use crate::bindings::Bindings;
 use crate::cli::Args;
 use crate::columns::Columns;
 use crate::settings::Settings;
@@ -303,8 +304,8 @@ pub struct Options {
     pub locale: Option<String>,
     /// Theme colours in trippy's `item=colour` form, command line over file.
     pub theme_colors: Vec<(String, String)>,
-    /// Key bindings in trippy's `command=key` form, command line over file.
-    pub key_bindings: Vec<(String, String)>,
+    /// The key map, with the command line and the file applied.
+    pub bindings: Bindings,
 }
 
 /// Reads the config file, layers the command line over it and validates.
@@ -588,6 +589,7 @@ pub fn build(
         key_bindings.retain(|(existing, _)| *existing != item);
         key_bindings.push((item, value));
     }
+    let bindings = Bindings::from_items(&key_bindings)?;
 
     Ok(Options {
         targets: args.targets,
@@ -596,7 +598,7 @@ pub fn build(
         refresh_rate,
         locale: layer_opt(args.tui_locale, cfg_tui.tui_locale),
         theme_colors,
-        key_bindings,
+        bindings,
     })
 }
 
@@ -893,7 +895,7 @@ mod tests {
         assert_eq!(options.settings.columns.to_codes(), "holsravbwdt");
         assert_eq!(options.refresh_rate, Duration::from_millis(100));
         assert!(options.theme_colors.is_empty());
-        assert!(options.key_bindings.is_empty());
+        assert_eq!(options.bindings, Bindings::default());
     }
 
     #[test]
@@ -929,11 +931,18 @@ mod tests {
         assert_eq!(options.settings.address_mode, AddressMode::Both);
         assert_eq!(options.settings.max_addrs, None);
         assert_eq!(
-            options.key_bindings,
-            [
-                (String::from("toggle-map"), String::from("v")),
-                (String::from("toggle-chart"), String::from("y"))
-            ]
+            options.bindings.display(crate::bindings::Item::ToggleMap),
+            "v"
+        );
+        assert_eq!(
+            options.bindings.display(crate::bindings::Item::ToggleChart),
+            "y"
+        );
+        assert!(
+            with_file(&["x"], "[bindings]\ntoggle-chart = \"m\"")
+                .unwrap_err()
+                .to_string()
+                .contains("Duplicate key bindings")
         );
         assert_eq!(
             options.theme_colors,

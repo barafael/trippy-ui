@@ -1,6 +1,7 @@
 //! Application state and command handling.
 
-use crate::command::{self, Command, InputCommand, ScrollType};
+use crate::bindings::{Bindings, Item};
+use crate::command::{Command, InputCommand, ScrollType};
 use crate::config::{AddressMode, Named, Options, TraceConfig};
 use crate::format;
 use crate::geoip;
@@ -73,7 +74,7 @@ impl SettingsTab {
             SettingsTab::Trace => 18,
             SettingsTab::Dns => 5,
             SettingsTab::GeoIp => 1,
-            SettingsTab::Bindings => command::bindings().len(),
+            SettingsTab::Bindings => Item::ALL.len(),
             SettingsTab::Theme => theme::Slot::ALL.len(),
             SettingsTab::Columns => crate::columns::ALL.len(),
         }
@@ -94,6 +95,8 @@ pub struct State {
     pub selected_trace: usize,
     /// The view settings.
     pub settings: Settings,
+    /// The key map.
+    pub bindings: Bindings,
     /// The tracing parameters, fixed at startup.
     pub trace_config: TraceConfig,
     /// The targets as given on the command line.
@@ -183,6 +186,7 @@ impl State {
             traces: Vec::new(),
             selected_trace: 0,
             settings: options.settings,
+            bindings: options.bindings,
             trace_config: options.trace,
             targets: options.targets,
             fatal: None,
@@ -712,47 +716,99 @@ impl State {
     }
 
     /// Key hints for the status bar.
-    pub fn key_bindings(&self) -> Vec<(&'static str, &'static str)> {
+    pub fn hints(&self) -> Vec<Hint> {
+        let b = &self.bindings;
+        let one = |item: Item, label| Hint {
+            keys: b.display(item),
+            label,
+            commands: vec![item.command()],
+        };
+        let pair = |a: Item, c: Item, label| Hint {
+            keys: format!("{}/{}", b.display(a), b.display(c)),
+            label,
+            commands: vec![a.command(), c.command()],
+        };
         if self.fatal.is_some() || self.traces.is_empty() {
-            return vec![("q", "Quit")];
+            return vec![one(Item::Quit, "Quit")];
         }
         if self.show_help {
-            return vec![("h/?/Esc", "Close")];
+            return vec![Hint {
+                keys: format!(
+                    "{}/{}/{}",
+                    b.display(Item::ToggleHelp),
+                    b.display(Item::ToggleHelpAlt),
+                    b.display(Item::ClearSelection)
+                ),
+                label: "Close",
+                commands: vec![Command::ShowHelp],
+            }];
         }
         if self.show_settings {
             return vec![
-                ("↑/↓", "Item"),
-                ("←/→", "Tab"),
-                ("Enter", "Change"),
-                ("s/Esc", "Close"),
+                pair(Item::PreviousHop, Item::NextHop, "Item"),
+                pair(Item::PreviousTrace, Item::NextTrace, "Tab"),
+                one(Item::ToggleHopDetails, "Change").with_keys("Enter", Command::Activate),
+                Hint {
+                    keys: format!(
+                        "{}/{}",
+                        b.display(Item::ToggleSettings),
+                        b.display(Item::ClearSelection)
+                    ),
+                    label: "Close",
+                    commands: vec![Command::ShowSettings],
+                },
             ];
         }
-        self.view_key_bindings()
-    }
-
-    /// The key hints of the current view, as listed by the help overlay.
-    pub fn view_key_bindings(&self) -> Vec<(&'static str, &'static str)> {
-        let mut bindings = vec![
-            ("↑/↓", "Hop"),
-            ("←/→", "Trace"),
-            ("c", "Chart"),
-            ("m", "Map"),
-            ("d", "Details"),
-            ("f", "Flows"),
-            ("z", "AS info"),
-            ("/", "Filter"),
-            ("y", "Copy"),
-            ("s", "Settings"),
-            ("h", "Help"),
-            ("q", "Quit"),
-        ];
+        let mut hints = vec![pair(Item::PreviousHop, Item::NextHop, "Hop")];
+        if self.traces.len() > 1 || self.show_flows {
+            hints.push(pair(
+                Item::PreviousTrace,
+                Item::NextTrace,
+                if self.show_flows { "Flow" } else { "Trace" },
+            ));
+        }
         if self.show_chart {
-            bindings.insert(2, ("=/-", "Zoom"));
+            hints.push(pair(Item::ChartZoomIn, Item::ChartZoomOut, "Zoom"));
         }
-        if self.traces.len() <= 1 {
-            bindings.retain(|(keys, _)| *keys != "←/→");
-        }
-        bindings
+        hints.extend([
+            one(Item::ToggleChart, "Chart"),
+            one(Item::ToggleMap, "Map"),
+            one(Item::ToggleHopDetails, "Details"),
+            one(Item::ToggleFlows, "Flows"),
+            one(Item::ToggleAsInfo, "AS info"),
+            Hint {
+                keys: String::from("/"),
+                label: "Filter",
+                commands: vec![Command::Input(InputCommand::Enter)],
+            },
+            Hint {
+                keys: String::from("y"),
+                label: "Copy",
+                commands: vec![Command::Copy],
+            },
+            one(Item::ToggleSettings, "Settings"),
+            one(Item::ToggleHelp, "Help"),
+            one(Item::Quit, "Quit"),
+        ]);
+        hints
+    }
+}
+
+/// A key hint of the status bar: the keys, what they do, and the commands
+/// they stand for (clickable when there is exactly one).
+#[derive(Clone, Debug)]
+pub struct Hint {
+    pub keys: String,
+    pub label: &'static str,
+    pub commands: Vec<Command>,
+}
+
+impl Hint {
+    /// The same hint for a fixed key and command.
+    fn with_keys(mut self, keys: &str, command: Command) -> Self {
+        self.keys = keys.to_string();
+        self.commands = vec![command];
+        self
     }
 }
 
@@ -819,7 +875,7 @@ mod command_tests {
             refresh_rate: Duration::from_millis(100),
             locale: None,
             theme_colors: Vec::new(),
-            key_bindings: Vec::new(),
+            bindings: Bindings::default(),
         }
     }
 

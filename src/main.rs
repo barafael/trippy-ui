@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 mod app;
+mod bindings;
 mod cli;
 mod columns;
 mod command;
@@ -30,6 +31,18 @@ fn main() {
 
 fn run() -> anyhow::Result<()> {
     let args = cli::Args::parse();
+    if args.print_tui_binding_commands {
+        for item in bindings::Item::ALL {
+            println!("{}", item.name());
+        }
+        return Ok(());
+    }
+    if args.print_tui_theme_items {
+        for item in config::file::THEME_ITEMS {
+            println!("{item}");
+        }
+        return Ok(());
+    }
     // Raise CAP_NET_RAW to the effective set if the binary has it; the tracers
     // drop it again once their sockets are open.
     let privilege = trippy_privilege::Privilege::acquire_privileges()?;

@@ -60,7 +60,7 @@ impl eframe::App for TrippyApp {
         // An open modal takes Escape to close itself; it must not also clear the
         // selection. egui routes Escape to the modal first, so nothing to do here.
         let mut keys = command::Keys::take(&ctx);
-        while let Some(command) = keys.next(self.state.prompt.is_some()) {
+        while let Some(command) = keys.next(self.state.prompt.is_some(), &self.state.bindings) {
             self.run(command);
         }
         if !self.state.running {
