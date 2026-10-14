@@ -15,12 +15,16 @@ trippy-privilege = { path = "../trippy/crates/trippy-privilege" }
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 chrono-tz = "0.10"
+clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions", "wrap_help", "env"] }
+etcetera = "0.11"
 egui = "0.36.2"
 egui_extras = { version = "0.36.2", default-features = false }
 egui_plot = "0.37.0"
 humantime = "2"
 itertools = "0.15"
 maxminddb = "0.28"
+serde = { version = "1", default-features = false, features = ["derive"] }
+toml = { version = "1", default-features = false, features = ["serde", "parse"] }
 
 # Desktop only: the window, and system theme discovery on Linux.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

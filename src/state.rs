@@ -142,8 +142,8 @@ pub struct State {
 
 impl State {
     /// Builds the resolver, resolves the targets and starts a trace for each.
-    pub fn new(options: Options) -> Self {
-        let mut state = Self::empty(options);
+    pub fn new(options: Options, geoip: geoip::Lookup) -> Self {
+        let mut state = Self::empty(options, geoip);
         match trace::resolve_targets(&state.targets, &state.trace_config, &state.resolver) {
             Ok(targets) if targets.is_empty() => {
                 state.fatal = Some(String::from("no valid IP addresses for the given targets"));
@@ -169,7 +169,7 @@ impl State {
     }
 
     /// The state before any trace is started: the resolver and the settings.
-    fn empty(options: Options) -> Self {
+    fn empty(options: Options, geoip: geoip::Lookup) -> Self {
         Self {
             running: true,
             resolver: DnsResolver::start(DnsConfig::new(
@@ -179,11 +179,7 @@ impl State {
                 options.trace.dns_ttl,
             ))
             .expect("DNS resolver"),
-            geoip: match &options.trace.geoip_mmdb_file {
-                Some(path) => geoip::Lookup::from_file(std::path::Path::new(path))
-                    .unwrap_or_else(|_| geoip::Lookup::empty()),
-                None => geoip::Lookup::empty(),
-            },
+            geoip,
             traces: Vec::new(),
             selected_trace: 0,
             settings: options.settings,
@@ -215,7 +211,7 @@ impl State {
     /// A state over prepared snapshots, without resolving or tracing.
     #[cfg(test)]
     pub fn for_test(options: Options, snapshots: Vec<trippy_core::State>) -> Self {
-        let mut state = Self::empty(options);
+        let mut state = Self::empty(options, geoip::Lookup::empty());
         for (i, snapshot) in snapshots.into_iter().enumerate() {
             let hostname = state
                 .targets
@@ -821,6 +817,9 @@ mod command_tests {
                 ..Settings::default()
             },
             refresh_rate: Duration::from_millis(100),
+            locale: None,
+            theme_colors: Vec::new(),
+            key_bindings: Vec::new(),
         }
     }
 

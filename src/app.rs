@@ -2,6 +2,7 @@
 
 use crate::command::{self, Command};
 use crate::config::Options;
+use crate::geoip;
 use crate::state::State;
 use crate::theme;
 use crate::ui;
@@ -18,7 +19,7 @@ pub struct TrippyApp {
 
 impl TrippyApp {
     /// Builds the window from the parsed command line.
-    pub fn new(cc: &eframe::CreationContext<'_>, options: Options) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, options: Options, geoip: geoip::Lookup) -> Self {
         let settings = cc
             .storage
             .and_then(|storage| storage.get_string(THEME_KEY))
@@ -28,7 +29,7 @@ impl TrippyApp {
         options.settings.theme = settings;
         theme::install(&cc.egui_ctx, &options.settings.theme);
         Self {
-            state: State::new(options),
+            state: State::new(options, geoip),
             ctx: cc.egui_ctx.clone(),
         }
     }

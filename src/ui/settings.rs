@@ -205,8 +205,7 @@ fn render_tui(state: &mut State, ui: &mut Ui) {
     let value = state
         .settings
         .timezone
-        .clone()
-        .unwrap_or_else(|| String::from("local"));
+        .map_or_else(|| String::from("auto"), |tz| tz.to_string());
     if row(ui, state.settings_item == 8, "tui-timezone", |ui| {
         value_text(ui, value)
     }) {

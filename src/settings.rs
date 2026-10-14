@@ -24,7 +24,7 @@ pub struct Settings {
     /// Whether to look up autonomous system information for hops.
     pub lookup_as_info: bool,
     /// The timezone of the clock, or `None` for the local one.
-    pub timezone: Option<String>,
+    pub timezone: Option<chrono_tz::Tz>,
     /// The theme.
     pub theme: theme::Settings,
     /// Whether the selected hop is shown with its details expanded.
@@ -32,10 +32,8 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// The timezone of the clock, if a valid one was configured.
+    /// The timezone of the clock, if one was configured.
     pub fn timezone(&self) -> Option<chrono_tz::Tz> {
         self.timezone
-            .as_deref()
-            .and_then(|name| name.parse::<chrono_tz::Tz>().ok())
     }
 }

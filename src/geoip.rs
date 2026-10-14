@@ -107,13 +107,15 @@ pub struct Lookup {
 }
 
 impl Lookup {
-    /// Opens a MaxMind database file.
-    pub fn from_file(path: &Path) -> anyhow::Result<Self> {
-        let reader = Reader::open_readfile(path).context(format!("{}", path.display()))?;
+    /// Opens a MaxMind database file; names are looked up in `locale`, with
+    /// English as the fallback.
+    pub fn from_file(path: &Path, locale: Option<&str>) -> anyhow::Result<Self> {
+        let reader = Reader::open_readfile(path)
+            .with_context(|| format!("failed to open GeoIP database {}", path.display()))?;
         Ok(Self {
             reader: Some(reader),
             cache: RefCell::new(HashMap::new()),
-            locale: FALLBACK_LOCALE.to_string(),
+            locale: locale.unwrap_or(FALLBACK_LOCALE).to_string(),
         })
     }
 
