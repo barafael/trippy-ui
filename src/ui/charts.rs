@@ -455,3 +455,44 @@ fn circle(longitude: f64, latitude: f64, radius_degrees: f64) -> Vec<[f64; 2]> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ms(values: &[u64]) -> Vec<Duration> {
+        values.iter().map(|v| Duration::from_millis(*v)).collect()
+    }
+
+    #[test]
+    fn history_takes_the_newest_samples() {
+        let samples = ms(&[5, 0, 3, 2, 1]);
+        assert_eq!(history_window(&samples, 3), [Some(5000), None, Some(3000)]);
+        assert_eq!(history_window(&samples, 10).len(), 5);
+        assert!(history_window(&[], 4).is_empty());
+    }
+
+    #[test]
+    fn chart_series_starts_at_the_newest_sample() {
+        let samples = ms(&[5, 4, 3]);
+        assert_eq!(chart_series(&samples, 2), [[0.0, 5.0], [1.0, 4.0]]);
+        assert_eq!(chart_series(&samples, 8).len(), 3);
+    }
+
+    #[test]
+    fn histogram_skips_lost_probes_but_counts_them() {
+        let samples = ms(&[3, 0, 3, 7]);
+        assert_eq!(histogram_of(&samples), [(3, 50), (7, 25)]);
+        assert!(histogram_of(&[]).is_empty());
+    }
+
+    #[test]
+    fn flows_window_keeps_the_selection_visible() {
+        assert_eq!(flows_window(10, 4, 0, 0), 0);
+        assert_eq!(flows_window(10, 4, 0, 5), 2);
+        assert_eq!(flows_window(10, 4, 6, 1), 1);
+        assert_eq!(flows_window(10, 4, 9, 9), 6);
+        assert_eq!(flows_window(2, 4, 0, 1), 0);
+        assert_eq!(flows_window(0, 0, 0, 0), 0);
+    }
+}

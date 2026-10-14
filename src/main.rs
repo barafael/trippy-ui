@@ -11,6 +11,8 @@ mod geoip;
 mod list;
 mod settings;
 mod state;
+#[cfg(test)]
+mod testing;
 mod theme;
 mod trace;
 mod ui;

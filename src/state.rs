@@ -143,7 +143,34 @@ pub struct State {
 impl State {
     /// Builds the resolver, resolves the targets and starts a trace for each.
     pub fn new(options: Options) -> Self {
-        let mut state = Self {
+        let mut state = Self::empty(options);
+        match trace::resolve_targets(&state.targets, &state.trace_config, &state.resolver) {
+            Ok(targets) if targets.is_empty() => {
+                state.fatal = Some(String::from("no valid IP addresses for the given targets"));
+            }
+            Ok(targets) => {
+                let pid = std::process::id() as u16;
+                for (i, (hostname, addr)) in targets.into_iter().enumerate() {
+                    match Trace::start(
+                        &state.trace_config,
+                        hostname,
+                        addr,
+                        pid.wrapping_add(i as u16),
+                    ) {
+                        Ok(trace) => state.traces.push(trace),
+                        Err(e) => state.fatal = Some(e.to_string()),
+                    }
+                }
+            }
+            Err(e) => state.fatal = Some(e.to_string()),
+        }
+        state.refresh_rows();
+        state
+    }
+
+    /// The state before any trace is started: the resolver and the settings.
+    fn empty(options: Options) -> Self {
+        Self {
             running: true,
             resolver: DnsResolver::start(DnsConfig::new(
                 options.trace.dns_resolve_method,
@@ -182,26 +209,26 @@ impl State {
             frozen_start: None,
             pressed: None,
             refresh_rate: options.refresh_rate,
-        };
-        match trace::resolve_targets(&state.targets, &state.trace_config, &state.resolver) {
-            Ok(targets) if targets.is_empty() => {
-                state.fatal = Some(String::from("no valid IP addresses for the given targets"));
-            }
-            Ok(targets) => {
-                let pid = std::process::id() as u16;
-                for (i, (hostname, addr)) in targets.into_iter().enumerate() {
-                    match Trace::start(
-                        &state.trace_config,
-                        hostname,
-                        addr,
-                        pid.wrapping_add(i as u16),
-                    ) {
-                        Ok(trace) => state.traces.push(trace),
-                        Err(e) => state.fatal = Some(e.to_string()),
-                    }
-                }
-            }
-            Err(e) => state.fatal = Some(e.to_string()),
+        }
+    }
+
+    /// A state over prepared snapshots, without resolving or tracing.
+    #[cfg(test)]
+    pub fn for_test(options: Options, snapshots: Vec<trippy_core::State>) -> Self {
+        let mut state = Self::empty(options);
+        for (i, snapshot) in snapshots.into_iter().enumerate() {
+            let hostname = state
+                .targets
+                .get(i)
+                .cloned()
+                .unwrap_or_else(|| format!("target-{i}"));
+            let addr = format!("10.0.0.{}", 100 + i).parse().expect("address");
+            state.traces.push(Trace::for_test(
+                &state.trace_config,
+                &hostname,
+                addr,
+                snapshot,
+            ));
         }
         state.refresh_rows();
         state
@@ -777,5 +804,105 @@ mod tests {
         assert_eq!(cycle_max_addrs(Some(3), Some(3)), None);
         assert_eq!(cycle_privacy(None, 5), Some(0));
         assert_eq!(cycle_privacy(Some(5), 5), None);
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+    use crate::testing::{lost, reply, state_from_rounds};
+
+    fn options() -> Options {
+        Options {
+            targets: vec![String::from("example.test")],
+            trace: TraceConfig::default(),
+            settings: Settings {
+                address_mode: AddressMode::Ip,
+                ..Settings::default()
+            },
+            refresh_rate: Duration::from_millis(100),
+        }
+    }
+
+    fn path() -> State {
+        let snapshot = state_from_rounds(&[
+            &[
+                reply(1, "10.0.0.1", 1.0),
+                lost(2),
+                reply(3, "10.0.0.3", 3.0),
+            ],
+            &[
+                reply(1, "10.0.0.1", 1.0),
+                reply(2, "10.0.0.2", 2.0),
+                reply(3, "10.0.0.3", 3.0),
+            ],
+        ]);
+        State::for_test(options(), vec![snapshot])
+    }
+
+    fn run(state: &mut State, command: Command) {
+        state.run_command(command, &egui::Context::default());
+    }
+
+    #[test]
+    fn hosts_and_privacy_stay_in_range() {
+        let mut state = path();
+        assert_eq!(state.max_hosts(), Some(1));
+        run(&mut state, Command::ExpandHosts);
+        assert_eq!(state.settings.max_addrs, Some(1));
+        run(&mut state, Command::ExpandHosts);
+        assert_eq!(state.settings.max_addrs, Some(1));
+        run(&mut state, Command::ContractHosts);
+        assert_eq!(state.settings.max_addrs, None);
+        for _ in 0..5 {
+            run(&mut state, Command::ExpandPrivacy);
+        }
+        assert_eq!(state.settings.privacy_max_ttl, Some(3));
+        for _ in 0..5 {
+            run(&mut state, Command::ContractPrivacy);
+        }
+        assert_eq!(state.settings.privacy_max_ttl, None);
+    }
+
+    #[test]
+    fn details_and_copy_respect_privacy() {
+        let mut state = path();
+        assert_eq!(state.selection.selected, Some(0));
+        assert_eq!(
+            state.selection_text().as_deref(),
+            Some("1\t10.0.0.1\t0.0%\t2\t2\t1.0\t1.0\t1.0\t1.0\t0.0\t")
+        );
+        run(&mut state, Command::ToggleHopDetails);
+        assert!(state.settings.show_hop_details);
+        assert_eq!(state.settings.max_addrs, Some(1));
+        run(&mut state, Command::ExpandPrivacy);
+        run(&mut state, Command::ExpandPrivacy);
+        assert_eq!(state.selection_text().as_deref(), Some("**Hidden**"));
+        run(&mut state, Command::ToggleHopDetails);
+        assert_eq!(state.settings.max_addrs, None);
+    }
+
+    #[test]
+    fn flows_need_a_multipath_strategy() {
+        let mut state = path();
+        run(&mut state, Command::ToggleFlows);
+        assert!(!state.show_flows);
+        assert!(state.notice.is_some());
+    }
+
+    #[test]
+    fn filter_narrows_the_rows() {
+        let mut state = path();
+        run(&mut state, Command::Input(InputCommand::Enter));
+        run(
+            &mut state,
+            Command::Input(InputCommand::Handle("0.3".into())),
+        );
+        state.poll();
+        assert_eq!(state.rows, [2]);
+        assert_eq!(state.selected_hop().map(Hop::ttl), Some(3));
+        run(&mut state, Command::Input(InputCommand::Exit));
+        state.poll();
+        assert_eq!(state.rows, [0, 1, 2]);
     }
 }

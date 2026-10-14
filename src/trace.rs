@@ -28,6 +28,27 @@ impl Trace {
     pub fn failure(&self) -> Option<&str> {
         self.snapshot.error().or(self.error.as_deref())
     }
+
+    /// A trace that never ran, holding a prepared snapshot.
+    #[cfg(test)]
+    pub fn for_test(cfg: &TraceConfig, hostname: &str, addr: IpAddr, snapshot: State) -> Self {
+        let tracer = Builder::new(addr)
+            .protocol(cfg.protocol)
+            .multipath_strategy(cfg.multipath_strategy)
+            .port_direction(cfg.port_direction)
+            .max_flows(cfg.max_flows())
+            .max_samples(cfg.max_samples)
+            .build()
+            .expect("tracer");
+        Self {
+            tracer,
+            handle: None,
+            hostname: hostname.to_string(),
+            target_addr: addr,
+            snapshot,
+            error: None,
+        }
+    }
 }
 
 impl Trace {
@@ -79,11 +100,13 @@ impl Trace {
         })
     }
 
-    /// Refreshes the snapshot, and notices a tracer that has stopped.
+    /// Refreshes the snapshot while the tracer runs, and notices when it has
+    /// stopped; the last snapshot is kept after that.
     pub fn poll(&mut self) {
-        if let Some(handle) = &self.handle
-            && handle.is_finished()
-        {
+        let Some(handle) = &self.handle else {
+            return;
+        };
+        if handle.is_finished() {
             let handle = self.handle.take().expect("handle was just checked");
             self.error = match handle.join() {
                 Ok(Ok(())) => None,

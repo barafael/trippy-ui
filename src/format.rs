@@ -471,3 +471,96 @@ pub fn details(
     };
     format!("{addr}{nat} [{index} of {count}]\n{hosts}\n{as_fmt}\n{geo_fmt}\n{ext_fmt}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{lost, reply, state_from_rounds};
+    use std::time::Duration;
+    use trippy_dns::{Config as DnsConfig, IpAddrFamily, ResolveMethod};
+
+    fn resolver() -> DnsResolver {
+        DnsResolver::start(DnsConfig::new(
+            ResolveMethod::System,
+            IpAddrFamily::Ipv4Only,
+            Duration::from_secs(1),
+            Duration::from_secs(60),
+        ))
+        .expect("resolver")
+    }
+
+    fn settings() -> Settings {
+        Settings {
+            address_mode: AddressMode::Ip,
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn host_and_details_hide_private_and_unanswered_hops() {
+        let state = state_from_rounds(&[&[
+            reply(1, "10.0.0.1", 1.0),
+            lost(2),
+            reply(3, "10.0.0.3", 3.0),
+        ]]);
+        let (dns, geo) = (resolver(), geoip::Lookup::empty());
+        let settings = Settings {
+            privacy_max_ttl: Some(1),
+            ..settings()
+        };
+        let hops = state.hops();
+        assert_eq!(host(&hops[0], &dns, &geo, &settings), "**Hidden**");
+        assert_eq!(host(&hops[1], &dns, &geo, &settings), "No response");
+        assert_eq!(host(&hops[2], &dns, &geo, &settings), "10.0.0.3");
+        assert_eq!(details(&hops[0], 0, &dns, &geo, &settings), "**Hidden**");
+        assert_eq!(details(&hops[1], 0, &dns, &geo, &settings), "No response");
+        let detail = details(&hops[2], 0, &dns, &geo, &settings);
+        assert!(detail.starts_with("10.0.0.3 [1 of 1]\n"), "{detail}");
+        assert!(detail.contains("AS Name: <not enabled>"), "{detail}");
+        assert!(detail.ends_with("Ext: <none>"), "{detail}");
+    }
+
+    #[test]
+    fn host_limits_addresses_by_frequency() {
+        let state = state_from_rounds(&[
+            &[reply(1, "10.0.0.1", 1.0)],
+            &[reply(1, "10.0.0.2", 1.0)],
+            &[reply(1, "10.0.0.2", 1.0)],
+        ]);
+        let (dns, geo) = (resolver(), geoip::Lookup::empty());
+        let hop = &state.hops()[0];
+        assert_eq!(
+            host(hop, &dns, &geo, &settings()),
+            "10.0.0.1 [33.3%]\n10.0.0.2 [66.7%]"
+        );
+        let limited = Settings {
+            max_addrs: Some(1),
+            ..settings()
+        };
+        assert_eq!(host(hop, &dns, &geo, &limited), "10.0.0.2 [66.7%]");
+    }
+
+    #[test]
+    fn cells_follow_the_terminal_frontend() {
+        let state = state_from_rounds(&[
+            &[reply(1, "10.0.0.1", 2.0), reply(2, "10.0.0.2", 4.0)],
+            &[reply(1, "10.0.0.1", 4.0), lost(2)],
+        ]);
+        let (dns, geo) = (resolver(), geoip::Lookup::empty());
+        let hops = state.hops();
+        let cell = |column, hop| super::cell(column, hop, &dns, &geo, &settings());
+        assert_eq!(cell(Column::Ttl, &hops[1]), "2");
+        assert_eq!(cell(Column::LossPct, &hops[1]), "50.0%");
+        assert_eq!(cell(Column::Sent, &hops[1]), "2");
+        assert_eq!(cell(Column::Received, &hops[1]), "1");
+        assert_eq!(cell(Column::Average, &hops[0]), "3.0");
+        assert_eq!(cell(Column::StdDev, &hops[1]), "");
+        assert_eq!(cell(Column::Asn, &hops[0]), "n/a");
+        assert_eq!(cell(Column::LastNatStatus, &hops[0]), "n/a");
+        assert_eq!(status_of(&hops[1], true), Status::TargetPartial);
+        assert_eq!(status_of(&hops[0], false), Status::Ok);
+        let unanswered = state_from_rounds(&[&[lost(1)]]);
+        assert_eq!(cell(Column::Average, &unanswered.hops()[0]), "");
+        assert_eq!(status_of(&unanswered.hops()[0], false), Status::AllLost);
+    }
+}
