@@ -87,8 +87,9 @@ fn sparkline(ui: &mut Ui, hop: &Hop, slots: usize, height: f32) {
     let mut lost = Vec::new();
     for (i, sample) in window.into_iter().enumerate() {
         match sample {
-            None => lost.push(Bar::new(i as f64, max).fill(p.samples_lost)),
-            Some(us) => bars.push(Bar::new(i as f64, us as f64).fill(p.samples)),
+            // Bars are centred on their x, so slot `i` spans `i..i + 1`.
+            None => lost.push(Bar::new(i as f64 + 0.5, max).fill(p.samples_lost)),
+            Some(us) => bars.push(Bar::new(i as f64 + 0.5, us as f64).fill(p.samples)),
         }
     }
     Plot::new("history")
@@ -124,7 +125,7 @@ fn frequency(ui: &mut Ui, hop: &Hop, height: f32) {
     let span = (max_ms + 1).max(FREQUENCY_SPAN) as f64;
     let bars: Vec<Bar> = values
         .iter()
-        .map(|(ms, pct)| Bar::new(*ms as f64, *pct as f64).fill(p.freq_bar))
+        .map(|(ms, pct)| Bar::new(*ms as f64 + 0.5, *pct as f64).fill(p.freq_bar))
         .collect();
     Plot::new("frequency")
         .height(height)
